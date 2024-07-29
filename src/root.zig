@@ -16,7 +16,7 @@ pub const CompileCommandsJson = struct {
     };
 
     pub const GenerateOptions = struct {
-        cstd: ?CStd,
+        cstd: ?CStd = null,
 
         const CStd = union(enum) {
             // $zig_root_path$/lib/libc/include/$arch_os_abi$
@@ -34,11 +34,12 @@ pub const CompileCommandsJson = struct {
         const systemIncludeDir: [3]?[]const u8 = blk: {
             var ret: [3]?[]const u8 = .{ null, null, null };
             if (getZigRootPath(b)) |zig_root_path| {
-                const zig_cc_builtin_include_path = try std.fs.path.resolve(b.allocator, &[_][]const u8 {
-                    zig_root_path,
-                    "lib/include"
-                });
-                ret[0] = zig_cc_builtin_include_path;
+                // FIXME Zig 与 Clangd 冲突
+                // const zig_cc_builtin_include_path = try std.fs.path.resolve(b.allocator, &[_][]const u8 {
+                //     zig_root_path,
+                //     "lib/include"
+                // });
+                // ret[0] = zig_cc_builtin_include_path;
 
                 if (options.cstd) |cstd| {
                     switch (cstd) {
