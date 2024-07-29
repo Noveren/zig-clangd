@@ -106,6 +106,7 @@ pub const CompileCommandsJson = struct {
                         try arguments.append(flag);
                     }
 
+                    try arguments.append("-D__GNUC__");
                     for (c_macros) |c_macro| {
                         try arguments.append(c_macro);
                     }
