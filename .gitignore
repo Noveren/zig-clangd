@@ -1,0 +1,7 @@
+.zig-cache/
+zig-out/
+**/compile_commands.json
+**/.clangd
+**/.clangd-format
+.cache/
+.DS_Store
