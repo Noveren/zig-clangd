@@ -11,8 +11,8 @@ pub fn build(b: *std.Build) !void {
         .target = target,
         .optimize = optimize,
     });
-    exe.linkLibC();
-    exe.addCSourceFile(.{ .file = b.path("src/main.c") });
+    exe.linkLibCpp();
+    exe.addCSourceFile(.{ .file = b.path("src/main.cc") });
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);
@@ -27,7 +27,7 @@ pub fn build(b: *std.Build) !void {
     const clangd_emit = b.option(bool, "clangd", "Enable to generate clangd config") orelse false;
     if (clangd_emit) {
         try clangd.CompileCommandsJson.generate(b, exe.root_module, .{
-            .cstd = .{ .arch_os_abi = "any-windows-any", .cxx = false }
-        });
+            .cstd = .{ .arch_os_abi = "any-windows-any", .cxx = true }
+         });
     }
 }

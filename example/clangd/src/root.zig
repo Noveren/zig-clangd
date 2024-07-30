@@ -16,13 +16,12 @@ pub const CompileCommandsJson = struct {
     };
 
     pub const GenerateOptions = struct {
-        cstd: ?CStd,
+        cstd: ?CStd = null,
 
-        const CStd = union(enum) {
+        const CStd = struct {
             // $zig_root_path$/lib/libc/include/$arch_os_abi$
-            Libc: []const u8,
-            // $zig_root_path$/lib/libcxx/include
-            Libcxx,
+            arch_os_abi: []const u8,
+            cxx: bool = false,
         };
     };
 
@@ -31,38 +30,37 @@ pub const CompileCommandsJson = struct {
         module: std.Build.Module,
         options: GenerateOptions,
     ) !void {
-        const systemIncludeDir: [3]?[]const u8 = blk: {
-            var ret: [3]?[]const u8 = .{ null, null, null };
-            if (getZigRootPath(b)) |zig_root_path| {
-                const zig_cc_builtin_include_path = try std.fs.path.resolve(b.allocator, &[_][]const u8 {
+        var systemIncludeDir: [5]?[]const u8 = .{ null, null, null, null, null };
+        if (getZigRootPath(b)) |zig_root_path| {
+            systemIncludeDir[0] = try std.fs.path.resolve(b.allocator, &[_][]const u8 {
+                zig_root_path,
+                "lib/include"
+            });
+            if (options.cstd) |cstd| {
+                const libc_include_path = try std.fs.path.resolve(b.allocator, &[_][]const u8 {
                     zig_root_path,
-                    "lib/include"
+                    "lib/libc/include",
+                    cstd.arch_os_abi,
                 });
-                ret[0] = zig_cc_builtin_include_path;
-
-                if (options.cstd) |cstd| {
-                    switch (cstd) {
-                        .Libc => |arch_os_abi| {
-                            const libc_include_path = try std.fs.path.resolve(b.allocator, &[_][]const u8 {
-                                zig_root_path,
-                                "lib/libc/include",
-                                arch_os_abi,
-                            });
-                            ret[1] = libc_include_path;
-                        },
-                        .Libcxx => {
-                            ret[2] = try std.fs.path.resolve(b.allocator, &[_][]const u8 {
-                                zig_root_path,
-                                "lib/libcxx/include"
-                            });
-                        }
-                    }
+                systemIncludeDir[1] = libc_include_path;
+                if (cstd.cxx) {
+                    systemIncludeDir[2] = try std.fs.path.resolve(b.allocator, &[_][]const u8 {
+                        zig_root_path,
+                        "lib/libcxx/include"
+                    });
+                    systemIncludeDir[3] = try std.fs.path.resolve(b.allocator, &[_][]const u8 {
+                        zig_root_path,
+                        "lib/libcxxabi/include"
+                    });
+                    systemIncludeDir[4] = try std.fs.path.resolve(b.allocator, &[_][]const u8 {
+                        zig_root_path,
+                        "lib/libunwind/include"
+                    });
                 }
-            } else |_| {
-                std.log.err("Failed to get zig_root_path\n", .{});
             }
-            break :blk ret;
-        };
+        } else |_| {
+            std.log.err("Failed to get zig_root_path\n", .{});
+        }
 
         const cwd = try std.fs.cwd().realpathAlloc(b.allocator, ".");
         defer b.allocator.free(cwd);
@@ -105,13 +103,28 @@ pub const CompileCommandsJson = struct {
                         try arguments.append(flag);
                     }
 
+                    try arguments.append("-D__GNUC__");
                     for (c_macros) |c_macro| {
                         try arguments.append(c_macro);
                     }
 
                     for (systemIncludeDir) |sid| {
                         if (sid) |_sid| {
-                            try arguments.append(b.fmt("-I{s}", .{_sid}));
+                            try arguments.append(b.fmt("-isystem{s}", .{_sid}));
+                        }
+                    }
+                    if (options.cstd) |cstd| {
+                        if (cstd.cxx) {
+                            try arguments.append("-D_LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS");
+                            try arguments.append("-D_LIBCXXABI_DISABLE_VISIBILITY_ANNOTATIONS");
+                            try arguments.append("-D_LIBCPP_HAS_NO_VENDOR_AVAILABILITY_ANNOTATIONS");
+                            try arguments.append("-D_LIBCPP_PSTL_CPU_BACKEND_SERIAL");
+                            try arguments.append("-D_LIBCPP_ABI_VERSION=1");
+                            try arguments.append("-D_LIBCPP_ABI_NAMESPACE=__1 ");
+                            try arguments.append("-D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_DEBUG");
+                            try arguments.append("-D__MSVCRT_VERSION__=0xE00");
+                            try arguments.append("-D_WIN32_WINNT=0x0a00");
+                            try arguments.append("-D_DEBUG");
                         }
                     }
                     for (include_dirs.items) |include_dir| {

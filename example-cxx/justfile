@@ -1,0 +1,6 @@
+clean:
+    rm -rf ./.cache
+    rm -rf ./.zig-cache
+
+cc:
+    zig c++ ./src/main.cc -o ./main.exe --verbose > zig_cxx.txt
