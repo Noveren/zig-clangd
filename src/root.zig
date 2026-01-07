@@ -1,6 +1,4 @@
-
 const std = @import("std");
-
 
 fn getZigRootPath(b: *std.Build) ![]const u8 {
     const zig_exe_path = try b.findProgram(&.{"zig"}, &.{});
@@ -27,35 +25,23 @@ pub const CompileCommandsJson = struct {
 
     pub fn generate(
         b: *std.Build,
-        module: std.Build.Module,
+        module: *std.Build.Module,
         options: GenerateOptions,
     ) !void {
         var systemIncludeDir: [5]?[]const u8 = .{ null, null, null, null, null };
         if (getZigRootPath(b)) |zig_root_path| {
-            systemIncludeDir[0] = try std.fs.path.resolve(b.allocator, &[_][]const u8 {
-                zig_root_path,
-                "lib/include"
-            });
+            systemIncludeDir[0] = try std.fs.path.resolve(b.allocator, &[_][]const u8{ zig_root_path, "lib/include" });
             if (options.cstd) |cstd| {
-                const libc_include_path = try std.fs.path.resolve(b.allocator, &[_][]const u8 {
+                const libc_include_path = try std.fs.path.resolve(b.allocator, &[_][]const u8{
                     zig_root_path,
                     "lib/libc/include",
                     cstd.arch_os_abi,
                 });
                 systemIncludeDir[1] = libc_include_path;
                 if (cstd.cxx) {
-                    systemIncludeDir[2] = try std.fs.path.resolve(b.allocator, &[_][]const u8 {
-                        zig_root_path,
-                        "lib/libcxx/include"
-                    });
-                    systemIncludeDir[3] = try std.fs.path.resolve(b.allocator, &[_][]const u8 {
-                        zig_root_path,
-                        "lib/libcxxabi/include"
-                    });
-                    systemIncludeDir[4] = try std.fs.path.resolve(b.allocator, &[_][]const u8 {
-                        zig_root_path,
-                        "lib/libunwind/include"
-                    });
+                    systemIncludeDir[2] = try std.fs.path.resolve(b.allocator, &[_][]const u8{ zig_root_path, "lib/libcxx/include" });
+                    systemIncludeDir[3] = try std.fs.path.resolve(b.allocator, &[_][]const u8{ zig_root_path, "lib/libcxxabi/include" });
+                    systemIncludeDir[4] = try std.fs.path.resolve(b.allocator, &[_][]const u8{ zig_root_path, "lib/libunwind/include" });
                 }
             }
         } else |_| {
@@ -66,27 +52,24 @@ pub const CompileCommandsJson = struct {
         defer b.allocator.free(cwd);
 
         const c_macros = module.c_macros.items;
-        const include_dirs = blk: {
-            var ret = std.ArrayList([]const u8).init(b.allocator);
+        var include_dirs = blk: {
+            var ret = try std.ArrayList([]const u8).initCapacity(b.allocator, 1024);
             for (module.include_dirs.items) |include_dir| {
                 switch (include_dir) {
-                    .path,
-                    .path_system,
-                    .path_after,
-                    .framework_path,
-                    .framework_path_system => |p| {
-                        try ret.append(p.getPath(b));
+                    .path, .path_system, .path_after, .framework_path, .framework_path_system => |p| {
+                        try ret.append(b.allocator, p.getPath(b));
                     },
                     .other_step => {},
                     .config_header_step => {},
+                    .embed_path => {},
                 }
             }
             break :blk ret;
         };
-        defer include_dirs.deinit();
+        defer include_dirs.deinit(b.allocator);
 
-        var data = std.ArrayList(Item).init(b.allocator);
-        defer data.deinit();
+        var data = try std.ArrayList(Item).initCapacity(b.allocator, 1024);
+        defer data.deinit(b.allocator);
 
         // 未对 Item 内存进行设计和管理（释放）
         for (module.link_objects.items) |link_object| {
@@ -95,54 +78,54 @@ pub const CompileCommandsJson = struct {
                 .c_source_file => |csf| {
                     const file_relative_path = try std.fs.path.relative(b.allocator, cwd, csf.file.getPath(b));
 
-                    var arguments = std.ArrayList([]const u8).init(b.allocator);
-                    try arguments.append("zig cc");                 // Compiler
-                    try arguments.append(file_relative_path);       // SourceFile
+                    var arguments = try std.ArrayList([]const u8).initCapacity(b.allocator, 1024);
+                    try arguments.append(b.allocator, "zig cc"); // Compiler
+                    try arguments.append(b.allocator, file_relative_path); // SourceFile
 
                     for (csf.flags) |flag| {
-                        try arguments.append(flag);
+                        try arguments.append(b.allocator, flag);
                     }
 
-                    try arguments.append("-D__GNUC__");
+                    try arguments.append(b.allocator, "-D__GNUC__");
                     for (c_macros) |c_macro| {
-                        try arguments.append(c_macro);
+                        try arguments.append(b.allocator, c_macro);
                     }
 
                     for (systemIncludeDir) |sid| {
                         if (sid) |_sid| {
-                            try arguments.append(b.fmt("-isystem{s}", .{_sid}));
+                            try arguments.append(b.allocator, b.fmt("-isystem{s}", .{_sid}));
                         }
                     }
                     if (options.cstd) |cstd| {
                         if (cstd.cxx) {
-                            try arguments.append("-D_LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS");
-                            try arguments.append("-D_LIBCXXABI_DISABLE_VISIBILITY_ANNOTATIONS");
-                            try arguments.append("-D_LIBCPP_HAS_NO_VENDOR_AVAILABILITY_ANNOTATIONS");
-                            try arguments.append("-D_LIBCPP_PSTL_CPU_BACKEND_SERIAL");
-                            try arguments.append("-D_LIBCPP_ABI_VERSION=1");
-                            try arguments.append("-D_LIBCPP_ABI_NAMESPACE=__1 ");
-                            try arguments.append("-D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_DEBUG");
-                            try arguments.append("-D__MSVCRT_VERSION__=0xE00");
-                            try arguments.append("-D_WIN32_WINNT=0x0a00");
-                            try arguments.append("-D_DEBUG");
+                            try arguments.append(b.allocator, "-D_LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS");
+                            try arguments.append(b.allocator, "-D_LIBCXXABI_DISABLE_VISIBILITY_ANNOTATIONS");
+                            try arguments.append(b.allocator, "-D_LIBCPP_HAS_NO_VENDOR_AVAILABILITY_ANNOTATIONS");
+                            try arguments.append(b.allocator, "-D_LIBCPP_PSTL_CPU_BACKEND_SERIAL");
+                            try arguments.append(b.allocator, "-D_LIBCPP_ABI_VERSION=1");
+                            try arguments.append(b.allocator, "-D_LIBCPP_ABI_NAMESPACE=__1 ");
+                            try arguments.append(b.allocator, "-D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_DEBUG");
+                            try arguments.append(b.allocator, "-D__MSVCRT_VERSION__=0xE00");
+                            try arguments.append(b.allocator, "-D_WIN32_WINNT=0x0a00");
+                            try arguments.append(b.allocator, "-D_DEBUG");
                         }
                     }
                     for (include_dirs.items) |include_dir| {
                         const dir_relative = try std.fs.path.relative(b.allocator, cwd, include_dir);
-                        try arguments.append(b.fmt("-I{s}", .{dir_relative}));
+                        try arguments.append(b.allocator, b.fmt("-I{s}", .{dir_relative}));
                     }
 
-                    const item = Item {
+                    const item = Item{
                         .arguments = arguments.items,
                         .directory = cwd,
                         .file = file_relative_path,
                     };
-                    try data.append(item);
-                }
+                    try data.append(b.allocator, item);
+                },
             }
         }
 
-        const json_string = try std.json.stringifyAlloc(b.allocator, data.items, .{
+        const json_string = try std.json.Stringify.valueAlloc(b.allocator, data.items, .{
             .whitespace = .indent_4,
         });
         defer b.allocator.free(json_string);
@@ -153,18 +136,14 @@ pub const CompileCommandsJson = struct {
 };
 
 pub const Config = struct {
-    Diagnostics: Diagnostics,
-
+    // Diagnostics: Diagnostics,
     const Diagnostics = struct {
         UnusedIncludes: []const u8,
 
         fn default() Diagnostics {
-            return Diagnostics {
-                .UnusedIncludes = "Strict"
-            };
+            return Diagnostics{ .UnusedIncludes = "Strict" };
         }
     };
-
 
     pub const GenerateOptions = struct {
         diagnostics: ?DiagnosticsOptions = null,
@@ -175,7 +154,7 @@ pub const Config = struct {
     };
 
     pub fn generate(allocator: std.mem.Allocator, options: GenerateOptions) !void {
-        const config = Config {
+        const config = Config{
             .Diagnostics = blk: {
                 var default = Diagnostics.default();
                 if (options.diagnostics) |opt| {

@@ -1,11 +1,5 @@
-.{
-    .name = "zig-clangd",
-    .version = "0.0.1",
-    .dependencies = .{},
-    .paths = .{
-        "src",
-        "build.zig",
-        "build.zig.zon",
-        "README.md",
-    }
-}
+.{ .name = .clangd, .version = "0.1.0", .dependencies = .{}, .minimum_zig_version = "0.15.2", .paths = .{
+    "build.zig",
+    "build.zig.zon",
+    "README.md",
+} }

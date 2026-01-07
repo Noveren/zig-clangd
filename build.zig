@@ -1,4 +1,3 @@
-
 const std = @import("std");
 
 const clangd = @import("./src/root.zig");
