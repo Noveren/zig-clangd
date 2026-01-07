@@ -1,5 +1,13 @@
-.{ .name = .clangd, .version = "0.1.0", .dependencies = .{}, .minimum_zig_version = "0.15.2", .paths = .{
-    "build.zig",
-    "build.zig.zon",
-    "README.md",
-} }
+.{
+    .name = .zmake,
+    .fingerprint = 0x4ec8a6012a1e8ff7,
+    .version = "0.1.0",
+    .dependencies = .{},
+    .minimum_zig_version = "0.15.2",
+    .paths = .{
+        "src",
+        "build.zig",
+        "build.zig.zon",
+        "README.md",
+    }
+}

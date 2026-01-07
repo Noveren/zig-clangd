@@ -1,0 +1,16 @@
+.{
+    .name = .lib,
+    .version = "0.0.1",
+    .fingerprint = 0xa90f3bcc53e6adbc,
+    .dependencies =
+    .{ 
+        .clangd = .{
+            .path = "../..",
+        }
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    }
+}
