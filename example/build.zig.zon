@@ -1,0 +1,7 @@
+.{ .name = .example, .version = "0.0.1", .fingerprint = 0x6eec9b9fec978710, .dependencies = .{ .clangd = .{
+    .path = "..",
+} }, .paths = .{
+    "build.zig",
+    "build.zig.zon",
+    "src",
+} }
