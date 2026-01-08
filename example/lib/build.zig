@@ -5,6 +5,7 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
 
     const mod = b.createModule(.{
+        .root_source_file = b.path("src/add.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -17,6 +18,13 @@ pub fn build(b: *std.Build) !void {
     const lib = b.addLibrary(.{
         .name = "add",
         .root_module = mod,
+    });
+    // TODO 用法错误
+    // lib.installHeader(b.path("src"), "");
+    lib.installHeadersDirectory(b.path("src"), "", .{
+        .include_extensions = &.{
+            ".h",
+        }
     });
     b.installArtifact(lib);
 }

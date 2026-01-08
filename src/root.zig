@@ -2,26 +2,27 @@
 const std = @import("std");
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const allocator = gpa.allocator();
-    defer {
-        const deinit_status = gpa.deinit();
-        if (deinit_status == .leak) @panic("TEST FAIL");
-    }
+    // var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    // const allocator = gpa.allocator();
+    // defer {
+    //     const deinit_status = gpa.deinit();
+    //     if (deinit_status == .leak) @panic("TEST FAIL");
+    // }
 
-    var v: u64 = 0;
-    const b: *std.Build = @ptrCast(&v);
-    const c: *std.Build.Step.Compile = @ptrCast(&v);
-    const t = try Compile.from(allocator, c, b);
-    t.deinit();
+    // var v: u64 = 0;
+    // const b: *std.Build = @ptrCast(&v);
+    // const c: *std.Build.Step.Compile = @ptrCast(&v);
+    // const t = try Compile.from(allocator, c, b);
+    // t.deinit();
 
-    const a = try generateCompileCommandsJson(allocator, c, b, .{});
-    allocator.free(a);
+    // const a = try generateCompileCommandsJson(allocator, c, b, .{});
+    // allocator.free(a);
 }
 
-const Compile = struct {
+pub const Compile = struct {
     allocator: std.mem.Allocator,
     data: Data,
+    
     const IncludeDir = struct {
         class: []u8,
         path: ?[]u8 = null,
@@ -34,6 +35,7 @@ const Compile = struct {
             }
         }
     };
+
     const LinkObject = struct {
         class: []u8,
         path: ?[]u8 = null,
@@ -59,6 +61,7 @@ const Compile = struct {
         name: []u8,
         is_link_libc: ?bool = null,
         is_link_libcpp: ?bool = null,
+        debug: bool = true,
         c_macros: [][]u8,
         include_dirs: []IncludeDir,
         link_objects: []LinkObject,
@@ -89,22 +92,22 @@ const Compile = struct {
         }
     };
 
-    fn stringfy(self: *const @This(), allocator: std.mem.Allocator) ![]const u8 {
+    pub fn deinit(self: @This()) void {
+        self.data.deinit(self.allocator);
+    }
+
+    pub fn stringify(self: *const @This(), allocator: std.mem.Allocator) ![]const u8 {
         return std.json.Stringify.valueAlloc(allocator, self.data, .{
             .whitespace = .indent_2,
         });
     }
 
-    fn deinit(self: @This()) void {
-        self.data.deinit(self.allocator);
-    }
-
-    fn from(allocator: std.mem.Allocator, compile: *std.Build.Step.Compile, b: *std.Build) !@This() {
+    pub fn from(allocator: std.mem.Allocator, b: *std.Build, compile: *const std.Build.Step.Compile) !@This() {
         const name = try allocator.dupe(u8, compile.name);
         const root_module = compile.root_module;
 
         var other_steps = try std.ArrayList(Data).initCapacity(allocator, 8);
-
+        
         var c_macros = try allocator.alloc([]u8, root_module.c_macros.items.len);
         for (root_module.c_macros.items, 0..) |i, k| {
             c_macros[k] = try allocator.dupe(u8, i);
@@ -159,7 +162,7 @@ const Compile = struct {
                         break;
                     }
                 } else {
-                    const sub = try @This().from(allocator, v, b);
+                    const sub = try @This().from(allocator, b, v);
                     try other_steps.append(allocator, sub.data);
                 }
             },
@@ -192,7 +195,7 @@ const Compile = struct {
                             break;
                         }
                     } else {
-                        const sub = try @This().from(allocator, v, b);
+                        const sub = try @This().from(allocator, b, v);
                         try other_steps.append(allocator, sub.data);
                     }
                 },
@@ -233,7 +236,12 @@ const Compile = struct {
                         });
                     }
                 },
-                else => {}
+                .win32_resource_file => |v| {
+                    try link_objects.append(allocator, .{
+                        .class = try allocator.dupe(u8, "win32_resource_file"),
+                        .path = try allocator.dupe(u8, v.file.getPath(b)),
+                    });
+                },
             }
         }
         link_objects.shrinkAndFree(allocator, link_objects.items.len);
@@ -245,6 +253,7 @@ const Compile = struct {
                 .name = name,
                 .is_link_libc = root_module.link_libc,
                 .is_link_libcpp = root_module.link_libcpp,
+                .debug = if (root_module.optimize) |v| (v == .Debug) else (false),
                 .c_macros = c_macros,
                 .include_dirs = include_dirs.allocatedSlice(),
                 .link_objects = link_objects.allocatedSlice(),
@@ -253,12 +262,6 @@ const Compile = struct {
         };
     }
 };
-
-pub fn stringifyCompile(allocator: std.mem.Allocator, compile: *std.Build.Step.Compile, b: *std.Build) ![]const u8 {
-    const c = try Compile.from(allocator, compile, b);
-    defer c.deinit();
-    return c.stringfy(allocator);
-}
 
 const CompileCommand = struct {
     directory: []const u8,
@@ -273,87 +276,192 @@ const CompileCommand = struct {
         }
         allocator.free(self.arguments);
     }
+
+    fn stringify(self: @This(), allocator: std.mem.Allocator) ![]const u8 {
+        return std.json.Stringify.valueAlloc(allocator, self, .{
+            .whitespace = .indent_2,
+        });
+    }
+
+    const CompileCommandOptions = struct {
+        cc: []const u8,
+        cxx: []const u8,
+        zig_libc_path: []const u8,
+        zig_libcxx_path: []const u8,
+        arguments: []const []const u8,
+    };
+
+    fn appendIncludeDirs(allocator: std.mem.Allocator, dst: *std.ArrayList([]u8), src: []Compile.IncludeDir) !void {
+        for (src) |include_dir| {
+            // TODO 处理其他类型的 IncludeDir
+            if (std.mem.eql(u8, include_dir.class, "path")) {
+                try dst.append(allocator, try allocator.dupe(u8, include_dir.path.?));
+            }
+        }
+    }
+
+    fn from(allocator: std.mem.Allocator, data: *const Compile.Data, options: CompileCommandOptions) !std.ArrayList(CompileCommand) {
+        var compile_comands = try std.ArrayList(CompileCommand).initCapacity(allocator, 8);
+
+        var include_dirs = try std.ArrayList([]u8).initCapacity(allocator, 8);
+        defer {
+            for (include_dirs.items) |i| {
+                allocator.free(i);
+            }
+            defer include_dirs.deinit(allocator);
+        }
+
+        for (data.other_steps) |*other_step| {
+            var sub_compile_commands = try from(allocator, other_step, options);
+            defer sub_compile_commands.deinit(allocator);
+            try compile_comands.appendSlice(allocator, sub_compile_commands.items);
+
+            try appendIncludeDirs(allocator, &include_dirs, other_step.include_dirs);
+        }
+        try appendIncludeDirs(allocator, &include_dirs, data.include_dirs);
+
+        for (data.link_objects) |link_object| {
+            if (std.mem.eql(u8, link_object.class, "c_source_file")) {
+                const directory = std.fs.path.dirname(link_object.path.?).?;
+                const file = std.fs.path.basename(link_object.path.?);
+                var arguments = try std.ArrayList([]const u8).initCapacity(allocator, 16);
+                {
+                    defer arguments.shrinkAndFree(allocator, arguments.items.len);
+                    // TODO 暂时全为 CC
+                    try arguments.append(allocator, try allocator.dupe(u8, options.cc));
+                    try arguments.append(allocator, try allocator.dupe(u8, file));
+                    if (data.debug) {
+                        try arguments.append(allocator, try allocator.dupe(u8, "-DDEBUG"));
+                    }
+                    for (options.arguments) |i| {
+                        try arguments.append(allocator, try allocator.dupe(u8, i));
+                    }
+                    for (link_object.flags.?) |flag| {
+                        try arguments.append(allocator, try allocator.dupe(u8, flag));
+                    }
+                    if (data.is_link_libc) |flag| {
+                        if (flag) {
+                            try arguments.append(allocator, try allocator.dupe(u8, "-isystem"));
+                            try arguments.append(allocator, try allocator.dupe(u8, options.zig_libc_path));
+                        }
+                    }
+                    if (data.is_link_libcpp) |flag| {
+                        if (flag) {
+                            try arguments.append(allocator, try allocator.dupe(u8, "-isystem"));
+                            try arguments.append(allocator, try allocator.dupe(u8, options.zig_libcxx_path));
+                        }
+                    }
+                    for (include_dirs.items) |include_dir| {
+                        try arguments.append(allocator, try std.fmt.allocPrint(allocator, "-I{s}", .{include_dir}));
+                    }
+                }
+                try compile_comands.append(allocator, .{
+                    .arguments = arguments.allocatedSlice(),
+                    .directory = try allocator.dupe(u8, directory),
+                    .file = try allocator.dupe(u8, file),
+                });
+            }
+        }
+        return compile_comands;
+    }
+
+    fn stringifyCompileCommands(
+        allocator: std.mem.Allocator,
+        b: *std.Build,
+        compile: *const std.Build.Step.Compile,
+        options: CompileCommandOptions,
+    ) ![]const u8 {
+        const info = try Compile.from(allocator, b, compile);
+        defer info.deinit();
+
+        var compile_comands = try CompileCommand.from(allocator, &info.data, options);
+        defer {
+            for (compile_comands.items) |i| {
+                i.deinit(allocator);
+            }
+            compile_comands.deinit(allocator);
+        }
+
+        return std.json.Stringify.valueAlloc(allocator, compile_comands.items, .{
+            .whitespace = .indent_2,
+        });
+
+    }
 };
 
-const GenerateOptions = struct {
+const ExportOptions= struct {
     cc: ?[]const u8 = null,
     cxx: ?[]const u8 = null,
     zig_root_path: ?[]const u8 = null,
-};
-
-const ConvertOptions = struct {
-    cc: []const u8,
-    cxx: []const u8,
-    arguments: []const []const u8,
+    sub_dir_path: ?[]const u8 = null,
 };
 
 
-fn convert(allocator: std.mem.Allocator, data: *const Compile.Data, options: ConvertOptions) !std.ArrayList(CompileCommand) {
-    var compile_comands = try std.ArrayList(CompileCommand).initCapacity(allocator, 8);
-    // TODO 共享所有依赖的头文件路径
-    // TODO 系统头文件路径
-    for (data.link_objects) |link_object| {
-        if (std.mem.eql(u8, link_object.class, "c_source_file")) {
-            const directory = std.fs.path.dirname(link_object.path.?).?;
-            const file = std.fs.path.basename(link_object.path.?);
-            var arguments = try std.ArrayList([]const u8).initCapacity(allocator, 16);
+// TODO 在一份 compile_commands.json 中生成多个 target 相关文件的编译指令，需实现共同依赖去重
+// pub fn exportCompileCommandsForTargets(
+//     allocator: std.mem.Allocator,
+//     b: *std.Build,
+//     compiles: []const std.Build.Step.Compile,
+//     options: ExportOptions,
+// ) !void {
+// }
 
-            // TODO 暂时全为 CC
-            try arguments.append(allocator, try allocator.dupe(u8, options.cc));
-            try arguments.append(allocator, try allocator.dupe(u8, file));
-            for (options.arguments) |i| {
-                try arguments.append(allocator, try allocator.dupe(u8, i));
-            }
-            for (link_object.flags.?) |flag| {
-                try arguments.append(allocator, try allocator.dupe(u8, flag));
-            }
-            
-            arguments.shrinkAndFree(allocator, arguments.items.len);
-            try compile_comands.append(allocator, .{
-                .arguments = arguments.allocatedSlice(),
-                .directory = try allocator.dupe(u8, directory),
-                .file = try allocator.dupe(u8, file),
-            });
-        }
-    }
-    return compile_comands;
-}
-
-pub fn generateCompileCommandsJson(allocator: std.mem.Allocator, compile: *std.Build.Step.Compile, b: *std.Build, options: GenerateOptions) ![]const u8 {
-    const c = try Compile.from(allocator, compile, b);
-    defer c.deinit();
-
-    // const zig_exe_path = try b.findProgram(&.{"zig"}, &.{});
-    // const zig_root_path = std.fs.path.dirname(zig_exe_path).?;
-
-    const _options = ConvertOptions {
-        .cc = options.cc orelse "cc",
-        .cxx = options.cxx orelse "cxx",
-        .arguments = &[_][]const u8{
-            "-D__GNUC__",
-            "-D_LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS",
-            "-D_LIBCXXABI_DISABLE_VISIBILITY_ANNOTATIONS",
-            "-D_LIBCPP_HAS_NO_VENDOR_AVAILABILITY_ANNOTATIONS",
-            "-D_LIBCPP_PSTL_CPU_BACKEND_SERIAL",
-            "-D_LIBCPP_ABI_VERSION=1",
-            "-D_LIBCPP_ABI_NAMESPACE=__1 ",
-            "-D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_DEBUG",
-            "-D__MSVCRT_VERSION__=0xE00",
-            "-D_WIN32_WINNT=0x0a00",
-            "-D_DEBUG"
+pub fn exportCompileCommands(
+    allocator: std.mem.Allocator,
+    b: *std.Build,
+    compile: *const std.Build.Step.Compile,
+    options: ExportOptions,
+) !void {
+    const zig_root_path = blk: {
+        if (options.zig_root_path) |p| {
+            break :blk p;
+        } else {
+            const zig_exe_path = try b.findProgram(&.{"zig"}, &.{});
+            break :blk std.fs.path.dirname(zig_exe_path).?;
         }
     };
+    const zig_libc_path = blk: {
+        // TODO 根据编译 target 生成
+        const platform = "any-windows-any";
+        break :blk try std.fs.path.join(allocator, &[_][]const u8 {
+            zig_root_path,
+            "lib",
+            "libc",
+            "include",
+            platform,
+        });
+    };
+    defer allocator.free(zig_libc_path);
+    const zig_libcxx_path = blk: {
+        // TODO libcxxabi, libunwind
+        break :blk try std.fs.path.join(allocator, &[_][]const u8 {
+            zig_root_path,
+            "lib",
+            "libcxx",
+            "include",
+        });
+    };
+    defer allocator.free(zig_libcxx_path);
 
-    var compile_comands = try convert(allocator, &c.data, _options);
-    defer {
-        for (compile_comands.items) |i| {
-            i.deinit(allocator);
+    const compile_commands_json = try CompileCommand.stringifyCompileCommands(allocator, b, compile, .{
+        .cc = options.cc orelse "gcc",
+        .cxx = options.cxx orelse "gcc",
+        .zig_libc_path = zig_libc_path,
+        .zig_libcxx_path = zig_libcxx_path,
+        .arguments = &[_][]const u8{
+            "-D__GNUC__",
         }
-        compile_comands.deinit(allocator);
-    }
-
-    return std.json.Stringify.valueAlloc(allocator, compile_comands.items, .{
-        .whitespace = .indent_2,
     });
+    defer allocator.free(compile_commands_json);
 
+    const dir: std.fs.Dir = blk: {
+        if (options.sub_dir_path) |sub_path| {
+            break :blk try std.fs.cwd().makeOpenPath(sub_path, .{});
+        }
+        break :blk std.fs.cwd();
+    };
+    const file = try dir.createFile("compile_commands.json", .{});
+    _ = try file.write(compile_commands_json);
 }
+
+// TODO 支持生成 makefile, ninjia 并选定工具链

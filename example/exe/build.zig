@@ -34,7 +34,7 @@ pub fn build(b: *std.Build) !void {
         .name = "exe",
         .root_module = mod,
     });
-    // b.installArtifact(exe_c);
+    b.installArtifact(exe_c);
 
     var gpa = std.heap.DebugAllocator(.{}){};
     const allocator = gpa.allocator();
@@ -46,38 +46,16 @@ pub fn build(b: *std.Build) !void {
     }
     // const allocator = b.allocator;
 
-    const s0 = try zmake.stringifyCompile(allocator, exe_c, b);
-    defer allocator.free(s0);
-    std.debug.print("{s}\n", .{s0});
+    const info = try zmake.Compile.from(allocator, b, exe_c);
+    defer info.deinit();
+    const info_s = try info.stringify(allocator);
+    defer allocator.free(info_s);
+    std.debug.print("{s}\n", .{info_s});
 
-    const s1 = try zmake.generateCompileCommansJson(allocator, exe_c, b, .{});
-    defer allocator.free(s1);
-    std.debug.print("{s}\n", .{s1});
-
-    const filename = "compile_commands.json";
-    const write_file = b.addWriteFile(filename, s1);
-    const p = try write_file.getDirectory().join(b.allocator, filename);
-    const install_file = b.addInstallFile(p, filename);
-
-    const create_json_step =  b.step("clangd", "Generate compile_commands.json");
-    create_json_step.dependOn(&install_file.step);
-
-    
-    // const clangd_emit = b.option(bool, "clangd", "Enable to generate clangd config") orelse false;
-    // if (clangd_emit) {
-
-    // }
-
-    // const exe_cxx = b.addExecutable(.{
-    //     .name = "cxx",
-    //     .root_module = b.createModule(.{
-    //         .target = target,
-    //         .optimize = optimize,
-    //     }),
-    // });
-    // exe_cxx.addCSourceFile(.{
-    //     .file = b.path("src/main.cc"),
-    //     .flags = &.{},
-    // });
-    // exe_cxx.linkLibCpp();
+    const emit_cc = b.option(bool, "clangd", "") orelse false;
+    if (emit_cc) {
+        try zmake.exportCompileCommands(allocator, b, exe_c, .{
+            .sub_dir_path = "build"
+        });
+    }
 }
