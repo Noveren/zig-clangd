@@ -169,7 +169,9 @@ pub const Compile = struct {
             .config_header_step => |v| {
                 try include_dirs.append(allocator, .{
                     .class = try allocator.dupe(u8, "config_header_step"),
-                    .path = try allocator.dupe(u8, v.getOutputDir().getPath(b)),
+                    // FIXME getPath() was called on a GeneratedFile that wasn't built yet.
+                    // .path = try allocator.dupe(u8, v.getOutputDir().getPath(b)),
+                    .path = try allocator.dupe(u8, v.include_path),
                 });
             },
         }
@@ -311,6 +313,7 @@ const CompileCommand = struct {
             defer include_dirs.deinit(allocator);
         }
 
+        // TODO 选择是否将源文件加入到生成列表中，还是仅头文件
         for (data.other_steps) |*other_step| {
             var sub_compile_commands = try from(allocator, other_step, options);
             defer sub_compile_commands.deinit(allocator);
