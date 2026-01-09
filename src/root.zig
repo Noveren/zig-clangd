@@ -1,13 +1,32 @@
+// TODO 支持生成 makefile, ninjia 并选定工具链
 
 const std = @import("std");
+const CompileCommandsJson = @import("CompileCommandsJson.zig");
 
+/// just for `zig build check`
 pub fn main() !void {
-    // var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    // const allocator = gpa.allocator();
-    // defer {
-    //     const deinit_status = gpa.deinit();
-    //     if (deinit_status == .leak) @panic("TEST FAIL");
-    // }
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+    defer {
+        const deinit_status = gpa.deinit();
+        if (deinit_status == .leak) @panic("TEST FAIL");
+    }
+
+    const filename = try allocator.dupe(u8, "compile_commands.json");
+    defer allocator.free(filename);
+
+    var compile_commands_json = try CompileCommandsJson.init(allocator);
+    defer compile_commands_json.deinit();
+    try compile_commands_json.appendClone(.{
+        .directory = ".",
+        .file = filename,
+        .arguments = &[_][]const u8 {
+            "gcc",
+            filename,
+        },
+    });
+    const json = try compile_commands_json.stringify(allocator);
+    defer allocator.free(json);
 
     // var v: u64 = 0;
     // const b: *std.Build = @ptrCast(&v);
@@ -263,6 +282,37 @@ pub const Compile = struct {
             },
         };
     }
+
+    const CompileCommandOptions = struct {
+        cc: []const u8,
+        cxx: []const u8,
+        zig_libc_path: []const u8,
+        zig_libcxx_path: []const u8,
+        arguments: []const []const u8,
+    };
+
+    // pub fn intoCompileCommandsJson(self: *const @This(), allocator: std.mem.Allocator, options: CompileCommandOptions) !CompileCommandsJson {
+    //     _ = options;
+    //     var json = try CompileCommandsJson.init(allocator);
+    //     // for (self.data.other_steps) |*other_step| {
+    //     //     other_step.include_dirs
+    //     // }
+    //     for (self.data.link_objects) |link_object| {
+    //         if (std.mem.eql(u8, link_object.class, "c_source_file")) {
+    //             var arguments = try std.ArrayList([]u8).initCapacity(allocator, 16);
+    //             {
+
+    //             }
+    //             arguments.shrinkAndFree(allocator, arguments.items.len);
+    //             json.appendMove(.{
+    //                 .directory = try allocator.dupe(u8, std.fs.path.dirname(link_object.path.?).?),
+    //                 .file = try allocator.dupe(u8, std.fs.path.basename(link_object.path.?)),
+    //                 .arguments = arguments.allocatedSlice(),
+    //             });
+    //         }
+    //     }
+    //     return json;
+    // }
 };
 
 const CompileCommand = struct {
@@ -466,5 +516,3 @@ pub fn exportCompileCommands(
     const file = try dir.createFile("compile_commands.json", .{});
     _ = try file.write(compile_commands_json);
 }
-
-// TODO 支持生成 makefile, ninjia 并选定工具链
