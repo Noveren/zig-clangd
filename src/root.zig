@@ -38,6 +38,17 @@ pub fn main() !void {
     // allocator.free(a);
 }
 
+fn getPathNotGenerated(b: *std.Build, path: std.Build.LazyPath) ?[]const u8 {
+    switch (path) {
+        .generated => {
+            return null;
+        },
+        else => |v| {
+            return v.getPath(b);
+        },
+    }
+}
+
 pub const Compile = struct {
     allocator: std.mem.Allocator,
     data: Data,
@@ -83,6 +94,7 @@ pub const Compile = struct {
         debug: bool = true,
         c_macros: [][]u8,
         include_dirs: []IncludeDir,
+        installed_include_dirs: [][]u8,
         link_objects: []LinkObject,
         other_steps: []Data,
 
@@ -98,6 +110,11 @@ pub const Compile = struct {
                 i.deinit(allocator);
             }
             allocator.free(self.include_dirs);
+
+            for (self.installed_include_dirs) |i| {
+                allocator.free(i);
+            }
+            allocator.free(self.installed_include_dirs);
 
             for (self.link_objects) |i| {
                 i.deinit(allocator);
@@ -124,6 +141,35 @@ pub const Compile = struct {
     pub fn from(allocator: std.mem.Allocator, b: *std.Build, compile: *const std.Build.Step.Compile) !@This() {
         const name = try allocator.dupe(u8, compile.name);
         const root_module = compile.root_module;
+
+        var installed_include_dirs = try std.ArrayList([]u8).initCapacity(allocator, 8);
+        for (compile.installed_headers.items) |installed_header| {
+            // std.log.info("Installed header: {s}", .{installed_header.getSource().getPath(b)});
+            // FIXME getPath() was called on a GeneratedFile that wasn't built yet.
+            // Is there a missing Step dependency on step 'configure cmake header include/build_config/SDL_revision.h.cmake to SDL3/SDL_revision.h'?
+            // installed_include_dirs[k] = try allocator.dupe(u8, installed_header.getSource().getPath(b));
+            switch (installed_header) {
+                .directory => |v| {
+                    // std.log.debug("installed_header directory: {s}", .{v.dest_rel_path});
+                    if (getPathNotGenerated(b, v.source)) |not_generated_path| {
+                        // std.log.debug("installed_header directory: {s}", .{not_generated_path});
+                        var _not_generated_path = not_generated_path;
+                        if (std.mem.endsWith(u8, not_generated_path, v.dest_rel_path)) {
+                            _not_generated_path = not_generated_path[0..(not_generated_path.len-v.dest_rel_path.len)];
+                        }
+                        try installed_include_dirs.append(allocator, try allocator.dupe(u8, _not_generated_path));
+                    } else {
+                        // std.log.warn("'{s}' is generated directory.", .{v.dest_rel_path}); // generated
+                        // std.log.warn("'{s}' is generated directory.", .{v.source.getDisplayName()}); // generated
+                        std.log.warn("'{s}' is generated installed header directory and it isn't added into compile_commands.json.", .{v.source.basename(b, null)}); // generated
+                    }
+                },
+                .file => |v| {
+                    std.log.warn("'{s}' is install header file and it isn't added into compile_commands.json.", .{v.source.getDisplayName()});
+                },
+            }
+        }
+        installed_include_dirs.shrinkAndFree(allocator, installed_include_dirs.items.len);
 
         var other_steps = try std.ArrayList(Data).initCapacity(allocator, 8);
         
@@ -232,6 +278,7 @@ pub const Compile = struct {
                         .path = try allocator.dupe(u8, v.getPath(b)),
                     });
                 },
+                // TODO 仅提取用户指定需要源文件的 link_object
                 .c_source_file => |v| {
                     var flags = try allocator.alloc([]u8, v.flags.len);
                     for (v.flags, 0..) |flag, k| {
@@ -277,6 +324,7 @@ pub const Compile = struct {
                 .debug = if (root_module.optimize) |v| (v == .Debug) else (false),
                 .c_macros = c_macros,
                 .include_dirs = include_dirs.allocatedSlice(),
+                .installed_include_dirs = installed_include_dirs.allocatedSlice(),
                 .link_objects = link_objects.allocatedSlice(),
                 .other_steps = other_steps.allocatedSlice(),
             },
@@ -341,6 +389,7 @@ const CompileCommand = struct {
         zig_libc_path: []const u8,
         zig_libcxx_path: []const u8,
         arguments: []const []const u8,
+        included_source_libs: []const []const u8 = &.{},
     };
 
     fn appendIncludeDirs(allocator: std.mem.Allocator, dst: *std.ArrayList([]u8), src: []Compile.IncludeDir) !void {
@@ -363,15 +412,20 @@ const CompileCommand = struct {
             defer include_dirs.deinit(allocator);
         }
 
-        // TODO 选择是否将源文件加入到生成列表中，还是仅头文件
-        for (data.other_steps) |*other_step| {
-            var sub_compile_commands = try from(allocator, other_step, options);
-            defer sub_compile_commands.deinit(allocator);
-            try compile_comands.appendSlice(allocator, sub_compile_commands.items);
-
-            try appendIncludeDirs(allocator, &include_dirs, other_step.include_dirs);
-        }
         try appendIncludeDirs(allocator, &include_dirs, data.include_dirs);
+        for (data.other_steps) |*other_step| {
+            for (options.included_source_libs) |included_source_lib| {
+                if (std.mem.eql(u8, included_source_lib, other_step.name)) {
+                    var sub_compile_commands = try from(allocator, other_step, options);
+                    defer sub_compile_commands.deinit(allocator);
+                    try compile_comands.appendSlice(allocator, sub_compile_commands.items);
+                    break;
+                }
+            }
+            for (other_step.installed_include_dirs) |installed_include_dir| {
+                try include_dirs.append(allocator, try allocator.dupe(u8, installed_include_dir));
+            }
+        }
 
         for (data.link_objects) |link_object| {
             if (std.mem.eql(u8, link_object.class, "c_source_file")) {
