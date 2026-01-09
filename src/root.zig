@@ -188,12 +188,15 @@ pub const Compile = struct {
                 });
             },
             .path_system => |v| {
+                // TODO 考虑如何处理用户提供的系统包含路径
+                // 特别是用于嵌入式开发时，用户自行提供的标准库
                 try include_dirs.append(allocator, .{
                     .class = try allocator.dupe(u8, "path_system"),
                     .path = try allocator.dupe(u8, v.getPath(b)),
                 });
             },
             .path_after => |v| {
+                // -idir
                 try include_dirs.append(allocator, .{
                     .class = try allocator.dupe(u8, "path_after"),
                     .path = try allocator.dupe(u8, v.getPath(b)),
@@ -456,6 +459,31 @@ const CompileCommand = struct {
                         if (flag) {
                             try arguments.append(allocator, try allocator.dupe(u8, "-isystem"));
                             try arguments.append(allocator, try allocator.dupe(u8, options.zig_libcxx_path));
+                            // TODO 考虑是否需要动态调整某些宏
+                            for (&[_][]const u8 {
+                                "__MSVCRT_VERSION__=0xE00",
+                                "_WIN32_WINNT=0x0a00",
+                                "_LIBCPP_ABI_VERSION=1",
+                                "_LIBCPP_ABI_VERSION=1",
+                                "_LIBCPP_HAS_THREADS=1",
+                                "_LIBCPP_HAS_MONOTONIC_CLOCK",
+                                "_LIBCPP_HAS_TERMINAL",
+                                "_LIBCPP_HAS_MUSL_LIBC=0",
+                                "_LIBCXXABI_DISABLE_VISIBILITY_ANNOTATIONS",
+                                "_LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS",
+                                "_LIBCPP_HAS_VENDOR_AVAILABILITY_ANNOTATIONS=0",
+                                "_LIBCPP_HAS_FILESYSTEM=1",
+                                "_LIBCPP_HAS_RANDOM_DEVICE",
+                                "_LIBCPP_HAS_LOCALIZATION",
+                                "_LIBCPP_HAS_UNICODE",
+                                "_LIBCPP_HAS_WIDE_CHARACTERS",
+                                "_LIBCPP_HAS_NO_STD_MODULES",
+                                "_LIBCPP_PSTL_BACKEND_SERIAL",
+                                "_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_NONE",
+                                "_LIBCPP_ENABLE_CXX17_REMOVED_UNEXPECTED_FUNCTIONS",
+                            }) |macro| {
+                                try arguments.append(allocator, try std.fmt.allocPrint(allocator, "-D{s}", .{macro}));
+                            }
                         }
                     }
                     for (include_dirs.items) |include_dir| {
