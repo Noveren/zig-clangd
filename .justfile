@@ -1,2 +1,2 @@
-build *args:
-    cd example/exe && zig build {{args}}
+build sub:
+    cd example/{{sub}} && zig build -p build -Dcompdb

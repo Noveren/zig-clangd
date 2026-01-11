@@ -2,7 +2,10 @@ const std = @import("std");
 const zmake = @import("zmake");
 
 pub fn build(b: *std.Build) !void {
+    // zig build-exe ./src/main.c
+    // -ODebug
     const optimize = b.standardOptimizeOption(.{});
+    // -target thumb-freestanding-eabihf -mcpu cortex_m4
     const target = b.resolveTargetQuery(.{
         .cpu_arch = .thumb,
         .os_tag = .freestanding,
@@ -20,8 +23,8 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
         .link_libc = false,
         // Excludes UBSAN code to prevent from bloating binary
-        .sanitize_c = .off,
-        .single_threaded = true,
+        .sanitize_c = .off,                 // -fno-sanitize-c
+        .single_threaded = true,            // -fsingle-threaded
     });
     mod.addCSourceFile(.{
         .file = b.path("src/main.c"),
@@ -29,16 +32,16 @@ pub fn build(b: *std.Build) !void {
     });
 
     const elf = b.addExecutable(.{
-        .name = "firmware" ++ ".elf",
+        .name = "firmware" ++ ".elf",       // --name firmware.elf
         .root_module = mod,
-        .linkage = .static,
+        .linkage = .static,                 //  -static
     });
     // elf.setLinkerScript()
-    elf.entry = .{ .symbol_name = "main" };
-    elf.link_gc_sections = true;
-    elf.link_data_sections = true;
-    elf.link_function_sections = true;
-    // b.installArtifact(elf);
+    elf.entry = .{ .symbol_name = "main" }; // -fentry=main
+    elf.link_gc_sections = true;            // --gc-sections
+    elf.link_data_sections = true;          // -fdata-sections
+    elf.link_function_sections = true;      // -ffunction-sections
+    b.installArtifact(elf);
 
     // NOTE: There's currently some bugs with Zig's implementation of objcopy:
     // https://github.com/ziglang/zig/issues/25653
@@ -68,7 +71,7 @@ pub fn build(b: *std.Build) !void {
     const emit_cc = b.option(bool, "compdb", "") orelse false;
     if (emit_cc) {
         try zmake.exportCompileCommands(allocator, b, elf, .{
-            .sub_dir_path = "zig-out"
+            .install_prefix = b.install_prefix
         });
     }
 }

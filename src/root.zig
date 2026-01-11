@@ -90,8 +90,8 @@ pub const Compile = struct {
 
     const Data = struct {
         name: []u8,
-        is_link_libc: ?bool = null,
-        is_link_libcpp: ?bool = null,
+        is_link_libc: bool,
+        is_link_libcpp: bool,
         debug: bool = true,
         c_macros: [][]u8,
         include_dirs: []IncludeDir,
@@ -329,8 +329,8 @@ pub const Compile = struct {
             .allocator = allocator,
             .data = .{
                 .name = name,
-                .is_link_libc = root_module.link_libc,
-                .is_link_libcpp = root_module.link_libcpp,
+                .is_link_libc = root_module.link_libc orelse false,
+                .is_link_libcpp = root_module.link_libcpp orelse false,
                 .debug = if (root_module.optimize) |v| (v == .Debug) else (false),
                 .c_macros = c_macros,
                 .include_dirs = include_dirs.allocatedSlice(),
@@ -396,9 +396,9 @@ const CompileCommand = struct {
     const CompileCommandOptions = struct {
         cc: []const u8,
         cxx: []const u8,
-        zig_libc_path: []const u8,
-        zig_libcxx_path: []const u8,
         arguments: []const []const u8,
+        zig_libc_arguments: []const []const u8,
+        zig_libcxx_arguments: []const []const u8,
         included_source_libs: []const []const u8 = &.{},
     };
 
@@ -456,41 +456,15 @@ const CompileCommand = struct {
                     for (link_object.flags.?) |flag| {
                         try arguments.append(allocator, try allocator.dupe(u8, flag));
                     }
-                    if (data.is_link_libc) |flag| {
-                        if (flag) {
-                            try arguments.append(allocator, try allocator.dupe(u8, "-isystem"));
-                            try arguments.append(allocator, try allocator.dupe(u8, options.zig_libc_path));
+
+                    if (data.is_link_libc) {
+                        for (options.zig_libc_arguments) |argument| {
+                            try arguments.append(allocator, try allocator.dupe(u8, argument));
                         }
                     }
-                    if (data.is_link_libcpp) |flag| {
-                        if (flag) {
-                            try arguments.append(allocator, try allocator.dupe(u8, "-isystem"));
-                            try arguments.append(allocator, try allocator.dupe(u8, options.zig_libcxx_path));
-                            // TODO 考虑是否需要动态调整某些宏
-                            for (&[_][]const u8 {
-                                "__MSVCRT_VERSION__=0xE00",
-                                "_WIN32_WINNT=0x0a00",
-                                "_LIBCPP_ABI_VERSION=1",
-                                "_LIBCPP_ABI_VERSION=1",
-                                "_LIBCPP_HAS_THREADS=1",
-                                "_LIBCPP_HAS_MONOTONIC_CLOCK",
-                                "_LIBCPP_HAS_TERMINAL",
-                                "_LIBCPP_HAS_MUSL_LIBC=0",
-                                "_LIBCXXABI_DISABLE_VISIBILITY_ANNOTATIONS",
-                                "_LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS",
-                                "_LIBCPP_HAS_VENDOR_AVAILABILITY_ANNOTATIONS=0",
-                                "_LIBCPP_HAS_FILESYSTEM=1",
-                                "_LIBCPP_HAS_RANDOM_DEVICE",
-                                "_LIBCPP_HAS_LOCALIZATION",
-                                "_LIBCPP_HAS_UNICODE",
-                                "_LIBCPP_HAS_WIDE_CHARACTERS",
-                                "_LIBCPP_HAS_NO_STD_MODULES",
-                                "_LIBCPP_PSTL_BACKEND_SERIAL",
-                                "_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_NONE",
-                                "_LIBCPP_ENABLE_CXX17_REMOVED_UNEXPECTED_FUNCTIONS",
-                            }) |macro| {
-                                try arguments.append(allocator, try std.fmt.allocPrint(allocator, "-D{s}", .{macro}));
-                            }
+                    if (data.is_link_libcpp) {
+                        for (options.zig_libcxx_arguments) |argument| {
+                            try arguments.append(allocator, try allocator.dupe(u8, argument));
                         }
                     }
                     for (include_dirs.items) |include_dir| {
@@ -554,45 +528,120 @@ pub fn exportCompileCommands(
     compile: *const std.Build.Step.Compile,
     options: ExportOptions,
 ) !void {
+    const path_delimiter = if (@import("builtin").target.os.tag == .windows) "\\" else "/";
     const zig_root_path = blk: {
         if (options.zig_root_path) |p| {
             break :blk p;
         } else {
-            const zig_exe_path = try b.findProgram(&.{"zig"}, &.{});
+            const zig_exe_path = b.findProgram(&.{"zig"}, &.{}) catch @panic("Couldn't find progarm 'zig'.");
             break :blk std.fs.path.dirname(zig_exe_path).?;
         }
     };
-    const zig_libc_path = blk: {
-        // TODO 根据编译 target 生成
-        // if (compile.root_module.resolved_target) |resolved_target| {
-        //     resolved_target.result
-        // }
-        const platform = "any-windows-any";
-        break :blk try std.fs.path.join(allocator, &[_][]const u8 {
-            zig_root_path,
-            "lib",
-            "libc",
-            "include",
-            platform,
-        });
-    };
-    defer allocator.free(zig_libc_path);
-    const zig_libcxx_path = blk: {
-        // TODO libcxxabi, libunwind
-        break :blk try std.fs.path.join(allocator, &[_][]const u8 {
-            zig_root_path,
-            "lib",
-            "libcxx",
-            "include",
-        });
-    };
-    defer allocator.free(zig_libcxx_path);
+    const zig_lib_include = try std.fs.path.join(allocator, &[_][]const u8 {
+        zig_root_path, "lib", "include",
+    });
+    defer allocator.free(zig_lib_include);
+    const zig_libc_include = try std.fs.path.join(allocator, &[_][]const u8 {
+        zig_root_path, "lib", "libc", "include",
+    });
+    defer allocator.free(zig_libc_include);
+
+    var zig_libc_arguments = try std.ArrayList([]u8).initCapacity(allocator, 16);
+    // link_cpp = true 编译时，包含了 libc 路径，但如此生成的 compild_commands.json 会导致 clangd 报错
+    var zig_libcxx_arguments = try std.ArrayList([]u8).initCapacity(allocator, 16);
+    defer {
+        for (zig_libc_arguments.items) |argument| {
+            allocator.free(argument);
+        }
+        zig_libc_arguments.deinit(allocator);
+        for (zig_libcxx_arguments.items) |argument| {
+            allocator.free(argument);
+        }
+        zig_libcxx_arguments.deinit(allocator);
+    }
+
+    try zig_libc_arguments.appendSlice(allocator, &.{
+        try allocator.dupe(u8, "-isystem"),
+        try allocator.dupe(u8, zig_lib_include),
+    });
+    try zig_libcxx_arguments.appendSlice(allocator, &.{
+        try allocator.dupe(u8, "-isystem"),
+        try std.fs.path.join(allocator, &[_][]const u8 { zig_root_path, "lib", "libcxx", "include" }),
+        try allocator.dupe(u8, "-isystem"),
+        try std.fs.path.join(allocator, &[_][]const u8 { zig_root_path, "lib", "libcxxabi", "include" }),
+    });
+    for (&[_][]const u8 {
+        // windows & macos
+        "-D_LIBCPP_ABI_VERSION=1",
+        "-D_LIBCPP_ABI_NAMESPACE=__1",
+        "-D_LIBCPP_HAS_THREADS=1",
+        "-D_LIBCPP_HAS_MONOTONIC_CLOCK",
+        "-D_LIBCPP_HAS_TERMINAL",
+        "-D_LIBCPP_HAS_MUSL_LIBC=0",
+        "-D_LIBCXXABI_DISABLE_VISIBILITY_ANNOTATIONS",
+        "-D_LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS",
+        "-D_LIBCPP_HAS_VENDOR_AVAILABILITY_ANNOTATIONS=0",
+        "-D_LIBCPP_HAS_FILESYSTEM=1",
+        "-D_LIBCPP_HAS_RANDOM_DEVICE",
+        "-D_LIBCPP_HAS_LOCALIZATION",
+        "-D_LIBCPP_HAS_UNICODE",
+        "-D_LIBCPP_HAS_WIDE_CHARACTERS",
+        "-D_LIBCPP_HAS_NO_STD_MODULES",
+        "-D_LIBCPP_PSTL_BACKEND_SERIAL",
+        "-D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_NONE",
+        "-D_LIBCPP_ENABLE_CXX17_REMOVED_UNEXPECTED_FUNCTIONS",
+    }) |argument| {
+        try zig_libcxx_arguments.append(allocator, try allocator.dupe(u8, argument));
+    }
+
+    if (compile.root_module.resolved_target) |resolved_target| {
+        // lib/include/<cpu_arch>-<os_tag>-<abi>
+        // std.Target.Query {
+        //     .cpu_arch = .x86_64,
+        //     .os_tag = .windows,
+        //     .abi = .musl,
+        // };
+        switch (resolved_target.result.os.tag) {
+            .windows => {
+                try zig_libc_arguments.appendSlice(allocator, &.{
+                    try allocator.dupe(u8, "-isystem"),
+                    try std.fmt.allocPrint(allocator, "{s}{s}any-windows-any", .{zig_libc_include, path_delimiter}),
+                    // try allocator.dupe(u8, "-isystem"),
+                    // try std.fmt.allocPrint(allocator, "{s}{s}x86_64-windows-gnu", .{zig_libc_include, path_delimiter}),
+                    // try allocator.dupe(u8, "-isystem"),
+                    // try std.fmt.allocPrint(allocator, "{s}{s}x86_64-windows-any", .{zig_libc_include, path_delimiter}),
+                    // try allocator.dupe(u8, "-isystem"),
+                    // try std.fmt.allocPrint(allocator, "{s}{s}generic-mingw", .{zig_libc_include, path_delimiter}),
+                    // try allocator.dupe(u8, "-D__MSVCRT_VERSION__=0xE00"),
+                    // try allocator.dupe(u8, "-D__WIN32_WINNT=0x0a00"),
+                });
+                try zig_libcxx_arguments.appendSlice(allocator, &.{
+                    try allocator.dupe(u8, "-isystem"),
+                    try std.fs.path.join(allocator, &[_][]const u8 { zig_root_path, "lib", "libunwind", "include" }),
+                });
+            },
+            .macos => {
+                try zig_libc_arguments.appendSlice(allocator, &.{
+                    try allocator.dupe(u8, "-isystem"),
+                    try allocator.dupe(u8, "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include"),
+                    try allocator.dupe(u8, "-isystem"),
+                    try allocator.dupe(u8, "/opt/homebrew/include"),
+                    try allocator.dupe(u8, "-iframework"),
+                    try allocator.dupe(u8, "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks"),
+                });
+            },
+            .linux => |v| {
+                std.log.warn("Unsupported os: {any}", .{v});
+            },
+            inline else => {}
+        }
+    }
 
     const compile_commands_json = try CompileCommand.stringifyCompileCommands(allocator, b, compile, .{
         .cc = options.cc orelse "gcc",
         .cxx = options.cxx orelse "gcc",
-        .zig_libc_path = zig_libc_path,
-        .zig_libcxx_path = zig_libcxx_path,
+        .zig_libc_arguments = zig_libc_arguments.items,
+        .zig_libcxx_arguments = zig_libcxx_arguments.items,
         .arguments = &[_][]const u8{
             "-D__GNUC__",
         }

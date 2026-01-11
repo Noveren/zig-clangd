@@ -24,7 +24,7 @@ pub fn build(b: *std.Build) !void {
         .name = "exe",
         .root_module = mod,
     });
-    b.installArtifact(exe_c);
+    // b.installArtifact(exe_c);
 
     var gpa = std.heap.DebugAllocator(.{}){};
     const allocator = gpa.allocator();
@@ -42,10 +42,10 @@ pub fn build(b: *std.Build) !void {
     defer allocator.free(info_s);
     std.debug.print("{s}\n", .{info_s});
 
-    const emit_cc = b.option(bool, "clangd", "") orelse false;
+    const emit_cc = b.option(bool, "compdb", "") orelse false;
     if (emit_cc) {
         try zmake.exportCompileCommands(allocator, b, exe_c, .{
-            .sub_dir_path = "build"
+            .install_prefix = b.install_prefix
         });
     }
 }
