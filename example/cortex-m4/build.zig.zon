@@ -1,0 +1,15 @@
+.{
+    .name = .firmware,
+    .version = "0.0.1",
+    .fingerprint =  0xd5ecd7c4c3f6c56a,
+    .dependencies = .{
+        .zmake = .{
+            .path = "../..",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    }
+}

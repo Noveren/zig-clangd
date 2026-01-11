@@ -1,4 +1,5 @@
 // TODO 支持生成 makefile, ninjia 并选定工具链
+// 此时要求必须为纯的 C/C++ 项目
 
 const std = @import("std");
 const CompileCommandsJson = @import("CompileCommandsJson.zig");
@@ -142,12 +143,18 @@ pub const Compile = struct {
         const name = try allocator.dupe(u8, compile.name);
         const root_module = compile.root_module;
 
+        // if (root_module.resolved_target) |resolved_target| {
+        //     std.log.debug("{any}", .{resolved_target.result.abi});
+        // } else {
+        //     std.log.debug("Native target", .{});
+        // }
         var installed_include_dirs = try std.ArrayList([]u8).initCapacity(allocator, 8);
         for (compile.installed_headers.items) |installed_header| {
             // std.log.info("Installed header: {s}", .{installed_header.getSource().getPath(b)});
             // FIXME getPath() was called on a GeneratedFile that wasn't built yet.
             // Is there a missing Step dependency on step 'configure cmake header include/build_config/SDL_revision.h.cmake to SDL3/SDL_revision.h'?
             // installed_include_dirs[k] = try allocator.dupe(u8, installed_header.getSource().getPath(b));
+            // installed header 会被复制到当前 .zig-cache 中，但只在编译后可获得 LazyPath 实际路径
             switch (installed_header) {
                 .directory => |v| {
                     // std.log.debug("installed_header directory: {s}", .{v.dest_rel_path});
@@ -528,7 +535,7 @@ const ExportOptions= struct {
     cc: ?[]const u8 = null,
     cxx: ?[]const u8 = null,
     zig_root_path: ?[]const u8 = null,
-    sub_dir_path: ?[]const u8 = null,
+    install_prefix: ?[]const u8 = null,
 };
 
 
@@ -557,6 +564,9 @@ pub fn exportCompileCommands(
     };
     const zig_libc_path = blk: {
         // TODO 根据编译 target 生成
+        // if (compile.root_module.resolved_target) |resolved_target| {
+        //     resolved_target.result
+        // }
         const platform = "any-windows-any";
         break :blk try std.fs.path.join(allocator, &[_][]const u8 {
             zig_root_path,
@@ -590,8 +600,23 @@ pub fn exportCompileCommands(
     defer allocator.free(compile_commands_json);
 
     const dir: std.fs.Dir = blk: {
-        if (options.sub_dir_path) |sub_path| {
-            break :blk try std.fs.cwd().makeOpenPath(sub_path, .{});
+        // default:
+        //  - Windows: $CWD\\zig-out
+        // -p <path>
+        // std.debug.print("{s}", .{b.install_path});
+        // std.debug.print("{s}", .{b.install_prefix});
+        if (options.install_prefix) |install_prefix| {
+            var path = install_prefix;
+            if (std.fs.path.isAbsolute(install_prefix)) {
+                if (std.mem.eql(u8, install_prefix, b.install_prefix)) {
+                    path = "zig-out";
+                } else {
+                    // Don't support absolute path.
+                    std.log.err("Don't support absolute path: '{s}'.", .{install_prefix});
+                    path = "";
+                }
+            }
+            break :blk try std.fs.cwd().makeOpenPath(path, .{});
         }
         break :blk std.fs.cwd();
     };
