@@ -453,6 +453,9 @@ const CompileCommand = struct {
                     for (options.arguments) |i| {
                         try arguments.append(allocator, try allocator.dupe(u8, i));
                     }
+                    for (data.c_macros) |i| {
+                        try arguments.append(allocator, try allocator.dupe(u8, i));
+                    }
                     for (link_object.flags.?) |flag| {
                         try arguments.append(allocator, try allocator.dupe(u8, flag));
                     }

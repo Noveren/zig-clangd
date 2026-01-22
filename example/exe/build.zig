@@ -15,6 +15,7 @@ pub fn build(b: *std.Build) !void {
         .target = target,
         .optimize = optimize,
     });
+    mod.addCMacro("addCMacro", "");
     mod.addCSourceFile(.{
         .file = b.path("src/main.c"),
         .flags = &.{},
