@@ -549,6 +549,16 @@ pub fn exportCompileCommands(
     });
     defer allocator.free(zig_libc_include);
 
+    var arguments = try std.ArrayList([]u8).initCapacity(allocator, 16);
+    defer {
+        for (arguments.items) |argument| {
+            allocator.free(argument);
+        }
+        arguments.deinit(allocator);
+    }
+    try arguments.append(allocator, try allocator.dupe(u8, "_D__GNUC__"));
+
+
     var zig_libc_arguments = try std.ArrayList([]u8).initCapacity(allocator, 16);
     // link_cpp = true 编译时，包含了 libc 路径，但如此生成的 compild_commands.json 会导致 clangd 报错
     var zig_libcxx_arguments = try std.ArrayList([]u8).initCapacity(allocator, 16);
@@ -638,16 +648,22 @@ pub fn exportCompileCommands(
             },
             inline else => {}
         }
+        try arguments.appendSlice(allocator, &.{
+            try allocator.dupe(u8, "-target"),
+            try std.fmt.allocPrint(allocator, "{t}-{t}-{t}", .{
+                resolved_target.result.cpu.arch,
+                resolved_target.result.os.tag,
+                resolved_target.result.abi,
+            }),
+        });
     }
 
     const compile_commands_json = try CompileCommand.stringifyCompileCommands(allocator, b, compile, .{
-        .cc = options.cc orelse "gcc",
-        .cxx = options.cxx orelse "gcc",
+        .cc = options.cc orelse "clang",
+        .cxx = options.cxx orelse "clang",
         .zig_libc_arguments = zig_libc_arguments.items,
         .zig_libcxx_arguments = zig_libcxx_arguments.items,
-        .arguments = &[_][]const u8{
-            "-D__GNUC__",
-        }
+        .arguments = arguments.items,
     });
     defer allocator.free(compile_commands_json);
 
