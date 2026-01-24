@@ -512,6 +512,8 @@ const ExportOptions= struct {
     cc: ?[]const u8 = null,
     cxx: ?[]const u8 = null,
     zig_root_path: ?[]const u8 = null,
+    // TOOD deprecated: clangd 默认检测根路径下的 compile_commands.json
+    // 且在 build.zig 中创建路径较为麻烦
     install_prefix: ?[]const u8 = null,
 };
 
@@ -557,7 +559,10 @@ pub fn exportCompileCommands(
         arguments.deinit(allocator);
     }
     try arguments.append(allocator, try allocator.dupe(u8, "_D__GNUC__"));
-
+    try arguments.appendSlice(allocator, &.{
+        try allocator.dupe(u8, "-isystem"),
+        try allocator.dupe(u8, zig_lib_include),
+    });
 
     var zig_libc_arguments = try std.ArrayList([]u8).initCapacity(allocator, 16);
     // link_cpp = true 编译时，包含了 libc 路径，但如此生成的 compild_commands.json 会导致 clangd 报错
@@ -573,10 +578,6 @@ pub fn exportCompileCommands(
         zig_libcxx_arguments.deinit(allocator);
     }
 
-    try zig_libc_arguments.appendSlice(allocator, &.{
-        try allocator.dupe(u8, "-isystem"),
-        try allocator.dupe(u8, zig_lib_include),
-    });
     try zig_libcxx_arguments.appendSlice(allocator, &.{
         try allocator.dupe(u8, "-isystem"),
         try std.fs.path.join(allocator, &[_][]const u8 { zig_root_path, "lib", "libcxx", "include" }),
