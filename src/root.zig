@@ -558,7 +558,7 @@ pub fn exportCompileCommands(
         }
         arguments.deinit(allocator);
     }
-    try arguments.append(allocator, try allocator.dupe(u8, "_D__GNUC__"));
+    try arguments.append(allocator, try allocator.dupe(u8, "-D__GNUC__"));
     try arguments.appendSlice(allocator, &.{
         try allocator.dupe(u8, "-isystem"),
         try allocator.dupe(u8, zig_lib_include),
@@ -646,6 +646,9 @@ pub fn exportCompileCommands(
             },
             .linux => |v| {
                 std.log.warn("Unsupported os: {any}", .{v});
+            },
+            .freestanding => {
+                try arguments.append(allocator, try allocator.dupe(u8, "-U__STDC_HOSTED__"));
             },
             inline else => {}
         }
