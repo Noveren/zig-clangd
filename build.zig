@@ -3,6 +3,7 @@ const std = @import("std");
 const root = @import("./src/root.zig");
 pub const Compile = root.Compile;
 pub const exportCompileCommands = root.exportCompileCommands;
+pub const ExportCompileDatabase = root.ExportCompileDatabase;
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});

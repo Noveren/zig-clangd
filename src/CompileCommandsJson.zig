@@ -11,7 +11,6 @@ const Allocator = std.mem.Allocator;
 /// which consists of an array of “command objects”,
 /// where each command object specifies one way a translation unit is compiled in the project.
 objects: std.ArrayList(CommandObject),
-allocator: Allocator,
 
 const CommandObject = struct {
     // The working directory of the compilation.
@@ -71,15 +70,14 @@ const CommandObject = struct {
 pub fn init(allocator: Allocator) !@This() {
     return @This() {
         .objects = try std.ArrayList(CommandObject).initCapacity(allocator, 16),
-        .allocator = allocator,
     };
 }
 
-pub fn deinit(self: *@This()) void {
+pub fn deinit(self: *@This(), allocator: Allocator) void {
     for (self.objects.items) |object| {
-        object.deinit(self.allocator);
+        object.deinit(allocator);
     }
-    self.objects.deinit(self.allocator);
+    self.objects.deinit(allocator);
 }
 
 pub fn stringify(self: @This(), allocator: Allocator) ![]const u8 {
@@ -89,10 +87,14 @@ pub fn stringify(self: @This(), allocator: Allocator) ![]const u8 {
     });
 }
 
-pub fn appendMove(self: *@This(), object: CommandObject) !void {
-    try self.objects.append(self.allocator, object);
+pub fn appendMove(self: *@This(), allocator: Allocator, object: CommandObject) !void {
+    try self.objects.append(allocator, object);
 }
 
-pub fn appendClone(self: *@This(), object: CommandObject) !void {
-    try self.objects.append(self.allocator, try object.clone(self.allocator));
+pub fn appendClone(self: *@This(), allocator: Allocator, object: CommandObject) !void {
+    try self.objects.append(allocator, try object.clone(allocator));
+}
+
+pub fn appendSliceMove(self: *@This(), allocator: Allocator, objects: []const CommandObject) !void {
+    try self.objects.appendSlice(allocator, objects);
 }

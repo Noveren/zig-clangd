@@ -4,6 +4,8 @@
 const std = @import("std");
 const CompileCommandsJson = @import("CompileCommandsJson.zig");
 
+pub const ExportCompileDatabase = @import("ExportCompileDatabase.zig");
+
 /// just for `zig build check`
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -17,8 +19,8 @@ pub fn main() !void {
     defer allocator.free(filename);
 
     var compile_commands_json = try CompileCommandsJson.init(allocator);
-    defer compile_commands_json.deinit();
-    try compile_commands_json.appendClone(.{
+    defer compile_commands_json.deinit(allocator);
+    try compile_commands_json.appendClone(allocator, .{
         .directory = ".",
         .file = filename,
         .arguments = &[_][]const u8 {

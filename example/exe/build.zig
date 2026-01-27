@@ -39,26 +39,30 @@ pub fn build(b: *std.Build) !void {
     });
     // b.installArtifact(exe_c);
 
-    var gpa = std.heap.DebugAllocator(.{}){};
-    const allocator = gpa.allocator();
-    defer {
-        const status = gpa.deinit();
-        if (status == .leak)  {
-            std.log.err("Memeory Leak.\n", .{});
-        }
-    }
-    // const allocator = b.allocator;
-
-    const info = try zmake.Compile.from(allocator, b, exe_c);
-    defer info.deinit();
-    const info_s = try info.stringify(allocator);
-    defer allocator.free(info_s);
-    std.debug.print("{s}\n", .{info_s});
-
     const emit_cc = b.option(bool, "compdb", "") orelse false;
     if (emit_cc) {
+        var gpa = std.heap.DebugAllocator(.{}){};
+        const allocator = gpa.allocator();
+        defer {
+            const status = gpa.deinit();
+            if (status == .leak)  {
+                std.log.err("Memeory Leak.\n", .{});
+            }
+        }
+        // const allocator = b.allocator;
+
+        const info = try zmake.Compile.from(allocator, b, exe_c);
+        defer info.deinit();
+        const info_s = try info.stringify(allocator);
+        defer allocator.free(info_s);
+        std.debug.print("{s}\n", .{info_s});
+
         try zmake.exportCompileCommands(allocator, b, exe_c, .{
             .install_prefix = b.install_prefix
         });
     }
+
+    const step_export = b.step("export", "");
+    const export_compdb = zmake.ExportCompileDatabase.create(b, exe_c, "");
+    step_export.dependOn(&export_compdb.step);
 }
