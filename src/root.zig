@@ -3,8 +3,8 @@
 
 const std = @import("std");
 const CompileCommandsJson = @import("CompileCommandsJson.zig");
-
-pub const ExportCompileDatabase = @import("ExportCompileDatabase.zig");
+const ExportCompileDatabase = @import("ExportCompileDatabase.zig");
+pub const exportCompileDatabase = ExportCompileDatabase.exportCompileDatabase;
 
 /// just for `zig build check`
 pub fn main() !void {

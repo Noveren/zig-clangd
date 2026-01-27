@@ -95,6 +95,9 @@ pub fn appendClone(self: *@This(), allocator: Allocator, object: CommandObject) 
     try self.objects.append(allocator, try object.clone(allocator));
 }
 
-pub fn appendSliceMove(self: *@This(), allocator: Allocator, objects: []const CommandObject) !void {
-    try self.objects.appendSlice(allocator, objects);
+pub fn mergeClone(self: *@This(), allocator: Allocator, other: @This()) !void {
+    // TODO 处理重复 (name, directory)
+    for (other.objects.items) |object| {
+        try self.objects.append(allocator, try object.clone(allocator));
+    }
 }

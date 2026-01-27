@@ -15,7 +15,7 @@ pub fn build(b: *std.Build) !void {
         .target = target,
         .optimize = optimize,
     });
-    mod.addCMacro("addCMacro", "");
+    mod.addCMacro("addCMacro", "1");
     mod.addCSourceFile(.{
         .file = b.path("src/main.c"),
         .flags = &.{},
@@ -61,8 +61,9 @@ pub fn build(b: *std.Build) !void {
             .install_prefix = b.install_prefix
         });
     }
-
     const step_export = b.step("export", "");
-    const export_compdb = zmake.ExportCompileDatabase.create(b, exe_c, "");
+    const export_compdb = zmake.exportCompileDatabase(b, exe_c, null, .{
+        .enable_warning = true,
+    });
     step_export.dependOn(&export_compdb.step);
 }
