@@ -11,6 +11,11 @@ const Allocator = std.mem.Allocator;
 /// which consists of an array of “command objects”,
 /// where each command object specifies one way a translation unit is compiled in the project.
 objects: std.ArrayList(CommandObject),
+owned_objects: bool = true,
+
+const Error = error {
+    ObjectsHasBeenMoved,
+};
 
 pub const Argument = union(enum) {
     arg: ?[]const u8,
@@ -137,13 +142,18 @@ pub fn init(allocator: Allocator) !@This() {
 }
 
 pub fn deinit(self: *@This(), allocator: Allocator) void {
-    for (self.objects.items) |object| {
-        object.deinit(allocator);
+    if (self.owned_objects) {
+        for (self.objects.items) |object| {
+            object.deinit(allocator);
+        }
     }
     self.objects.deinit(allocator);
 }
 
 pub fn stringify(self: @This(), allocator: Allocator) ![]const u8 {
+    if (!self.owned_objects) {
+        return Error.ObjectsHasBeenMoved;
+    }
     return std.json.Stringify.valueAlloc(allocator, self.objects.items, .{
         .whitespace = .indent_2,
         .emit_null_optional_fields = false,
@@ -151,20 +161,30 @@ pub fn stringify(self: @This(), allocator: Allocator) ![]const u8 {
 }
 
 pub fn appendMove(self: *@This(), allocator: Allocator, object: CommandObject) !void {
+    if (!self.owned_objects) {
+        return Error.ObjectsHasBeenMoved;
+    }
     try self.objects.append(allocator, object);
 }
 
 pub fn appendClone(self: *@This(), allocator: Allocator, object: CommandObject) !void {
+    if (!self.owned_objects) {
+        return Error.ObjectsHasBeenMoved;
+    }
     try self.objects.append(allocator, try object.clone(allocator));
 }
 
 pub fn appendCloneExt(self: *@This(), allocator: Allocator, file: []const u8, arguments: []const Argument) !void {
+    if (!self.owned_objects) {
+        return Error.ObjectsHasBeenMoved;
+    }
     try self.objects.append(allocator, try CommandObject.initClone(allocator, file, arguments));
 }
 
-pub fn mergeClone(self: *@This(), allocator: Allocator, other: @This()) !void {
-    // TODO 处理重复 (name, directory)
-    for (other.objects.items) |object| {
-        try self.objects.append(allocator, try object.clone(allocator));
+pub fn mergeMove(self: *@This(), allocator: Allocator, other: *@This()) !void {
+    if (!self.owned_objects) {
+        return Error.ObjectsHasBeenMoved;
     }
+    other.owned_objects = false;
+    try self.objects.appendSlice(allocator, other.objects.items);
 }

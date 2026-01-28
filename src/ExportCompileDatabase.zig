@@ -79,14 +79,6 @@ fn make(step: *Step, _: Step.MakeOptions) !void {
     _ = try file.write(content);
 }
 
-pub const Options = struct {
-    cc: []const u8 = "clang",
-    // or ZIG_LIB_PATH
-    zig_lib_path: ?[]const u8 = null,
-    include: ?[][]const u8 = null,
-    debug: bool = false,
-};
-
 fn makeExport(
     allocator: Allocator,
     b: *std.Build,
@@ -100,6 +92,28 @@ fn makeExport(
         defer allocator.free(s_info);
         std.debug.print("\n{s}\n", .{s_info});
     }
+
+    if (options.include_deps) |include_deps| {
+        var set = std.BufSet.init(allocator);
+        defer set.deinit();
+        for (include_deps) |i| {
+            try set.insert(i);
+        }
+        return convert(allocator, info, set, options);
+    } else {
+        return convert(allocator, info, null, options);
+    }
+}
+
+pub const Options = struct {
+    cc: []const u8 = "clang",
+    // or ZIG_LIB_PATH
+    zig_lib_path: ?[]const u8 = null,
+    include_deps: ?[]const []const u8 = null,
+    debug: bool = false,
+};
+
+fn convert(allocator: Allocator, info: CompileInfo, include_deps: ?std.BufSet, options: Options) !CompileCommandsJson {
     var json = try CompileCommandsJson.init(allocator);
     var arguments = try std.ArrayList(CompileCommandsJson.Argument).initCapacity(allocator, 16);
     defer arguments.deinit(allocator);
@@ -114,7 +128,7 @@ fn makeExport(
     defer allocator.free(zig_lib_path);
     var hosted = try StringHostedArray.init(allocator);
     defer hosted.deinit(allocator);
-    switch (compile.root_module.resolved_target.?.result.os.tag) {
+    switch (info.os) {
         .windows => {
             if (info.link_libcpp) {
                 try arguments.append(allocator, .{ .system_include_dirs = &[_][]const u8 {
@@ -145,22 +159,31 @@ fn makeExport(
                 }});
             }
         },
-        .freestanding => {
-            try arguments.append(allocator, .{ .system_include_dir = try hosted.join(allocator, &[_][]const u8 {
-                zig_lib_path, "include",
-            }) });
-        },
+        .freestanding => {},
         inline else => |v| {
             std.log.warn("Not adapted os.tag: '{t}'\n", .{v});
         }
+    }
+    if (!(info.link_libc or info.link_libcpp)) {
+        try arguments.append(allocator, .{ .system_include_dir = try hosted.join(allocator, &[_][]const u8 {
+            zig_lib_path, "include",
+        }) });
     }
 
     try arguments.append(allocator, .{ .c_macro = if (info.debug) "DEBUG" else null });
     try arguments.append(allocator, .{ .args = info.c_macros });
     {
-        // TODO 将依赖的源代码也加入到 compile_commands.json 中
+        // NOTE: 若为根目录外的源码，需要至少打开一次建立索引后才能跳到源码，否则只能跳到声明
         for (info.source.dependencies) |dep_info| {
             try arguments.append(allocator, .{ .include_dirs = dep_info.include.installed });
+            if (include_deps) |set| {
+                // TODO 去重，若需添加依赖源码，则构建树同名依赖应该只添加一次
+                if (set.contains(dep_info.name)) {
+                    var j = try convert(allocator, dep_info, set, options);
+                    defer j.deinit(allocator);
+                    try json.mergeMove(allocator, &j);
+                }
+            }
         }
         const end_of_common = arguments.items.len;
         for (info.source.c_source_files) |c_source_file| {
@@ -216,6 +239,7 @@ fn getZigLib(allocator: Allocator, zig_lib_path: ?[]const u8) ![]const u8 {
             else => {},
         }
     }
+    // TODO 基于 `zig env` 获得 zig_lib_dir
     return _zig_lib_path;
 }
 

@@ -5,6 +5,7 @@ const CompileInfo = @This();
 
 name: []const u8,
 triple: ?[]const u8,
+os: Os,
 native: bool,
 link_libc: bool,
 link_libcpp: bool,
@@ -12,6 +13,14 @@ debug: bool,
 c_macros: [][]const u8,
 include: Include,
 source: Source,
+
+const Os = enum {
+    windows,
+    macos,
+    linux,
+    freestanding,
+    other,
+};
 
 const Include = struct {
     normal: [][]const u8,
@@ -97,6 +106,13 @@ pub fn inspect(
                 resolved_target.result.os.tag,
                 resolved_target.result.abi,
             }) else null,
+        .os = if (compile.root_module.resolved_target) |resolved_target| switch (resolved_target.result.os.tag) {
+                .windows => .windows,
+                .macos => .macos,
+                .linux => .linux,
+                .freestanding => .freestanding,
+                else => .other,
+            } else .other,
         .native = if (compile.root_module.resolved_target) |resolved_target| resolved_target.query.isNative() else false,
         .link_libc = compile.root_module.link_libc orelse false,
         .link_libcpp = compile.root_module.link_libcpp orelse false,

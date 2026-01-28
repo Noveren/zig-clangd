@@ -24,15 +24,6 @@ pub fn build(b: *std.Build) !void {
     // lib.installHeader(b.path("inc/foo.h"), "");
     // error: failed to check cache: '\C:\Users\no-ve\Noveren\Project\01-Repository\zmake\example\lib\inc' file_hash IsDir
     // lib.installHeader(b.path("inc"), "");
-    lib.installHeadersDirectory(b.path("src"), "", .{
-        .include_extensions = &.{
-            ".h",
-        }
-    });
-    lib.installHeadersDirectory(b.path("inc"), "", .{
-        .include_extensions = &.{
-            ".h",
-        }
-    });
+    lib.installHeadersDirectory(b.path("inc"), "", .{});
     b.installArtifact(lib);
 }

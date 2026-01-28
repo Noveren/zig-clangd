@@ -41,6 +41,9 @@ pub fn build(b: *std.Build) !void {
 
     const compdb = zmake.exportCompileDatabase(b, exe, null, .{
         .debug = true,
+        .include_deps = &[_][]const u8{
+            "add",
+        },
     });
     const step_compdb = b.step("compdb", "export compile_commands.json");
     step_compdb.dependOn(&compdb.step);
