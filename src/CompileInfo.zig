@@ -4,6 +4,8 @@ const Allocator = std.mem.Allocator;
 const CompileInfo = @This();
 
 name: []const u8,
+triple: ?[]const u8,
+native: bool,
 link_libc: bool,
 link_libcpp: bool,
 debug: bool,
@@ -64,6 +66,9 @@ const Source = struct {
 
 pub fn deinit(self: CompileInfo, allocator: Allocator) void {
     allocator.free(self.name);
+    if (self.triple) |triple| {
+        allocator.free(triple);
+    }
     for (self.c_macros) |i| {
         allocator.free(i);
     }
@@ -86,6 +91,13 @@ pub fn inspect(
 ) Allocator.Error!CompileInfo {
     return .{
         .name = try allocator.dupe(u8, compile.name),
+        .triple = if (compile.root_module.resolved_target) |resolved_target|
+            try std.fmt.allocPrint(allocator, "{t}-{t}-{t}", .{
+                resolved_target.result.cpu.arch,
+                resolved_target.result.os.tag,
+                resolved_target.result.abi,
+            }) else null,
+        .native = if (compile.root_module.resolved_target) |resolved_target| resolved_target.query.isNative() else false,
         .link_libc = compile.root_module.link_libc orelse false,
         .link_libcpp = compile.root_module.link_libcpp orelse false,
         .debug = if (compile.root_module.optimize) |v| (v == .Debug) else (false),

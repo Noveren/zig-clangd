@@ -12,6 +12,56 @@ const Allocator = std.mem.Allocator;
 /// where each command object specifies one way a translation unit is compiled in the project.
 objects: std.ArrayList(CommandObject),
 
+pub const Argument = union(enum) {
+    arg: ?[]const u8,
+    args: [][]const u8,
+    c_macro_undef: ?[]const u8,
+    c_macro: ?[]const u8,
+    c_macros: []const []const u8,
+    include_dir: ?[]const u8,
+    include_dirs: [][]const u8,
+    system_include_dir: ?[]const u8,
+    system_include_dirs: []const []const u8,
+
+    fn applyClone(self: Argument, allocator: Allocator, arguments: *std.ArrayList([]const u8)) !void {
+        switch (self) {
+            .arg => |v| {
+                if (v) |_v| { try arguments.append(allocator, try allocator.dupe(u8, _v)); }
+            },
+            .args => |vs| {
+                for (vs) |v| { try arguments.append(allocator, try allocator.dupe(u8, v)); }
+            },
+            .c_macro_undef => |v| {
+                if (v) |_v| { try arguments.append(allocator, try std.fmt.allocPrint(allocator, "-U{s}", .{_v})); }
+            },
+            .c_macro => |v| {
+                if (v) |_v| { try arguments.append(allocator, try std.fmt.allocPrint(allocator, "-D{s}", .{_v})); }
+            },
+            .c_macros => |vs| {
+                for (vs) |v| { try arguments.append(allocator, try std.fmt.allocPrint(allocator, "-D{s}", .{v})); }
+            },
+            .include_dir => |v| {
+                if (v) |_v| { try arguments.append(allocator, try std.fmt.allocPrint(allocator, "-I{s}", .{_v})); }
+            },
+            .include_dirs => |vs| {
+                for (vs) |v| { try arguments.append(allocator, try std.fmt.allocPrint(allocator, "-I{s}", .{v})); }
+            },
+            .system_include_dir => |v| {
+                if (v) |_v| {
+                    try arguments.append(allocator, try allocator.dupe(u8, "-isystem"));
+                    try arguments.append(allocator, try allocator.dupe(u8, _v));
+                }
+            },
+            .system_include_dirs => |vs| {
+                for (vs) |v| {
+                    try arguments.append(allocator, try allocator.dupe(u8, "-isystem"));
+                    try arguments.append(allocator, try allocator.dupe(u8, v));
+                }
+            },
+        }
+    }
+};
+
 const CommandObject = struct {
     // The working directory of the compilation.
     // All paths specified in the command or file fields
@@ -65,6 +115,19 @@ const CommandObject = struct {
             .arguments = arguments,
         };
     }
+
+    fn initClone(allocator: Allocator, file: []const u8, arguments: []const Argument) !CommandObject {
+        var _arguments = try std.ArrayList([]const u8).initCapacity(allocator, 16);
+        for (arguments) |argument| {
+            try argument.applyClone(allocator, &_arguments);
+        }
+        _arguments.shrinkAndFree(allocator, _arguments.items.len);
+        return .{
+            .file = try allocator.dupe(u8, std.fs.path.basename(file)),
+            .directory = try allocator.dupe(u8, std.fs.path.dirname(file) orelse ""),
+            .arguments = _arguments.allocatedSlice(),
+        };
+    }
 };
 
 pub fn init(allocator: Allocator) !@This() {
@@ -93,6 +156,10 @@ pub fn appendMove(self: *@This(), allocator: Allocator, object: CommandObject) !
 
 pub fn appendClone(self: *@This(), allocator: Allocator, object: CommandObject) !void {
     try self.objects.append(allocator, try object.clone(allocator));
+}
+
+pub fn appendCloneExt(self: *@This(), allocator: Allocator, file: []const u8, arguments: []const Argument) !void {
+    try self.objects.append(allocator, try CommandObject.initClone(allocator, file, arguments));
 }
 
 pub fn mergeClone(self: *@This(), allocator: Allocator, other: @This()) !void {

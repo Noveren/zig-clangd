@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const Step = std.Build.Step;
 const LazyPath = std.Build.LazyPath;
 const Allocator = std.mem.Allocator;
@@ -67,18 +68,23 @@ fn make(step: *Step, _: Step.MakeOptions) !void {
     // const allocator = b.allocator;
     var json = try makeExport(allocator, b, self.artifact, self.options);
     defer json.deinit(allocator);
+    const content = try json.stringify(allocator);
+    defer allocator.free(content);
 
-    // const content = try json.stringify(allocator);
-    // defer allocator.free(content);
-    // const file = try std.fs.cwd().createFile(self.dest_rel_path, .{});
-    // defer file.close();
-    // _ = try file.write(content);
+    if (self.options.debug) {
+        std.debug.print("\n{s}\n", .{content});
+    }
+    const file = try b.build_root.handle.createFile(self.dest_rel_path, .{});
+    defer file.close();
+    _ = try file.write(content);
 }
 
 pub const Options = struct {
     cc: []const u8 = "clang",
-    zig_root_path: ?[]const u8 = null,
-    enable_warning: bool = false,
+    // or ZIG_LIB_PATH
+    zig_lib_path: ?[]const u8 = null,
+    include: ?[][]const u8 = null,
+    debug: bool = false,
 };
 
 fn makeExport(
@@ -87,20 +93,150 @@ fn makeExport(
     compile: *const Step.Compile,
     options: Options,
 ) !CompileCommandsJson {
-    const info = try CompileInfo.inspect(allocator, b, compile, options.enable_warning);
+    const info = try CompileInfo.inspect(allocator, b, compile, options.debug);
     defer info.deinit(allocator);
-
-    const s_info = try info.stringify(allocator);
-    defer allocator.free(s_info);
-    std.debug.print("\n{s}\n", .{s_info});
-
+    if (options.debug) {
+        const s_info = try info.stringify(allocator);
+        defer allocator.free(s_info);
+        std.debug.print("\n{s}\n", .{s_info});
+    }
     var json = try CompileCommandsJson.init(allocator);
-    try json.appendClone(allocator, .{
-        .file = "todo.c",
-        .directory = "todo",
-        .arguments = &.{
-            options.cc,
+    var arguments = try std.ArrayList(CompileCommandsJson.Argument).initCapacity(allocator, 16);
+    defer arguments.deinit(allocator);
+
+    try arguments.append(allocator, .{ .arg = options.cc });
+    try arguments.append(allocator, .{ .c_macro = "__GNUC__" });
+    try arguments.append(allocator, .{ .arg = "-target" });
+    try arguments.append(allocator, .{ .arg = info.triple });
+    try arguments.append(allocator, .{ .c_macro_undef = if (info.native) null else "__STDC_HOSTED__" });
+
+    const zig_lib_path = try getZigLib(allocator, options.zig_lib_path);
+    defer allocator.free(zig_lib_path);
+    var hosted = try StringHostedArray.init(allocator);
+    defer hosted.deinit(allocator);
+    switch (compile.root_module.resolved_target.?.result.os.tag) {
+        .windows => {
+            if (info.link_libcpp) {
+                try arguments.append(allocator, .{ .system_include_dirs = &[_][]const u8 {
+                    try hosted.join(allocator, &[_][]const u8 { zig_lib_path, "libcxx", "include" }),
+                    try hosted.join(allocator, &[_][]const u8 { zig_lib_path, "libcxxabi", "include"}),
+                }});
+            }
+            if (info.link_libc or info.link_libcpp) {
+                try arguments.append(allocator, .{ .system_include_dirs = &[_][]const u8 {
+                    try hosted.join(allocator, &[_][]const u8 { zig_lib_path, "include" }),
+                    try hosted.join(allocator, &[_][]const u8 { zig_lib_path, "libc", "include", "any-windows-any" }),
+                }});
+            }
+            if (info.link_libcpp) {
+                try arguments.append(allocator, .{ .system_include_dir = try hosted.join(allocator, &[_][]const u8 {
+                    zig_lib_path, "libunwind", "include"
+                }) });
+                try arguments.append(allocator, .{ .c_macros = &zig_cpp_genernal_c_macros });
+            }
         },
-    });
+        .macos => {
+            // FIXME
+            if (info.link_libc) {
+                try arguments.append(allocator, .{ .system_include_dirs = &[_][]const u8 {
+                    try allocator.dupe(u8, "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include"),
+                    try allocator.dupe(u8, "/opt/homebrew/include"),
+                    try allocator.dupe(u8, "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks"),
+                }});
+            }
+        },
+        .freestanding => {
+            try arguments.append(allocator, .{ .system_include_dir = try hosted.join(allocator, &[_][]const u8 {
+                zig_lib_path, "include",
+            }) });
+        },
+        inline else => |v| {
+            std.log.warn("Not adapted os.tag: '{t}'\n", .{v});
+        }
+    }
+
+    try arguments.append(allocator, .{ .c_macro = if (info.debug) "DEBUG" else null });
+    try arguments.append(allocator, .{ .args = info.c_macros });
+    {
+        // TODO 将依赖的源代码也加入到 compile_commands.json 中
+        for (info.source.dependencies) |dep_info| {
+            try arguments.append(allocator, .{ .include_dirs = dep_info.include.installed });
+        }
+        const end_of_common = arguments.items.len;
+        for (info.source.c_source_files) |c_source_file| {
+            arguments.shrinkRetainingCapacity(end_of_common);
+            try arguments.append(allocator, .{ .args = c_source_file.flags });
+            try json.appendCloneExt(allocator, c_source_file.file, arguments.items);
+        }
+    }
     return json;
 }
+
+const StringHostedArray = struct {
+    hosted: std.ArrayList([]const u8),
+
+    fn init(allocator: Allocator) !@This() {
+        return @This() {
+            .hosted = try std.ArrayList([]const u8).initCapacity(allocator, 8),
+        };
+    }
+
+    fn deinit(self: *@This(), allocator: Allocator) void {
+        for (self.hosted.items) |item| {
+            allocator.free(item);
+        }
+        self.hosted.deinit(allocator);
+    }
+
+    fn join(self: *@This(), allocator: Allocator, paths: []const []const u8) ![]const u8 {
+        try self.hosted.append(allocator, try std.fs.path.join(allocator, paths));
+        return self.hosted.getLast();
+    }
+
+    // fn appendMove(self: *@This(), allocator: Allocator, item: []const u8) ![]const u8 {
+    //     try self.hosted.append(allocator, item);
+    //     return item;
+    // }
+};
+
+
+fn getZigLib(allocator: Allocator, zig_lib_path: ?[]const u8) ![]const u8 {
+    const _zig_lib_path = blk: {
+        if (zig_lib_path) |v| {
+            break :blk try allocator.dupe(u8, v);
+        } else {
+            var env_map = try std.process.getEnvMap(allocator);
+            defer env_map.deinit();
+            break :blk try allocator.dupe(u8, env_map.get("ZIG_LIB_DIR").?);
+        }
+    };
+    for (_zig_lib_path) |*byte| {
+        switch (byte.*) {
+            '/', '\\' => byte.* = std.fs.path.sep,
+            else => {},
+        }
+    }
+    return _zig_lib_path;
+}
+
+const zig_cpp_genernal_c_macros = [_][]const u8 {
+    // windows & macos
+    "_LIBCPP_ABI_VERSION=1",
+    "_LIBCPP_ABI_NAMESPACE=__1",
+    "_LIBCPP_HAS_THREADS=1",
+    "_LIBCPP_HAS_MONOTONIC_CLOCK",
+    "_LIBCPP_HAS_TERMINAL",
+    "_LIBCPP_HAS_MUSL_LIBC=0",
+    "_LIBCXXABI_DISABLE_VISIBILITY_ANNOTATIONS",
+    "_LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS",
+    "_LIBCPP_HAS_VENDOR_AVAILABILITY_ANNOTATIONS=0",
+    "_LIBCPP_HAS_FILESYSTEM=1",
+    "_LIBCPP_HAS_RANDOM_DEVICE",
+    "_LIBCPP_HAS_LOCALIZATION",
+    "_LIBCPP_HAS_UNICODE",
+    "_LIBCPP_HAS_WIDE_CHARACTERS",
+    "_LIBCPP_HAS_NO_STD_MODULES",
+    "_LIBCPP_PSTL_BACKEND_SERIAL",
+    "_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_NONE",
+    "_LIBCPP_ENABLE_CXX17_REMOVED_UNEXPECTED_FUNCTIONS",
+};

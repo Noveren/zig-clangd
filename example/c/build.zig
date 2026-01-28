@@ -5,18 +5,32 @@ pub fn build(b: *std.Build) !void {
     const optimize = b.standardOptimizeOption(.{});
     const target = b.standardTargetOptions(.{});
 
-    const dep = b.dependency("lib", .{});
+    const dep = b.dependency("lib", .{
+        .target = target,
+        .optimize = optimize,
+    });
     const lib_add = dep.artifact("add");
 
     const mod = b.createModule(.{
         .target = target,
         .optimize = optimize,
     });
+    mod.addCMacro("addCMacro", "1");
     mod.addCSourceFile(.{
-        .file = b.path("src/main.cc"),
+        .file = b.path("src/main.c"),
         .flags = &.{},
     });
-    mod.link_libcpp = true;
+    mod.addCSourceFiles(.{
+        .root = b.path("src"),
+        .flags = &[_][]const u8 {
+            "-DFOO",
+        },
+        .files = &[_][]const u8 {
+            "foo1.c",
+            "foo2.c",
+        },
+    });
+    mod.link_libc = true;
     mod.linkLibrary(lib_add);
 
     const exe = b.addExecutable(.{
