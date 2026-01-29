@@ -93,27 +93,43 @@ fn makeExport(
         std.debug.print("\n{s}\n", .{s_info});
     }
 
-    if (options.include_deps) |include_deps| {
-        var set = std.BufSet.init(allocator);
-        defer set.deinit();
-        for (include_deps) |i| {
-            try set.insert(i);
+    var set: ?std.BufSet = blk: {
+        if (options.exclude_deps) |exclude_deps| {
+            var set = std.BufSet.init(allocator);
+            for (exclude_deps) |i| {
+                try set.insert(i);
+            }
+            break :blk set;
         }
-        return convert(allocator, info, set, options);
-    } else {
-        return convert(allocator, info, null, options);
+        if (options.include_deps) |include_deps| {
+            var set = std.BufSet.init(allocator);
+            for (include_deps) |i| {
+                try set.insert(i);
+            }
+            break :blk set;
+        }
+        break :blk null;
+
+    };
+    defer {
+        if (set) |*_set| {
+            _set.deinit();
+        }
     }
+    return convert(allocator, info, set, options);
 }
 
 pub const Options = struct {
     cc: []const u8 = "clang",
     // or ZIG_LIB_PATH
     zig_lib_path: ?[]const u8 = null,
+    // exclude_deps > include_deps; Include all deps.
+    exclude_deps: ?[]const []const u8 = null,
     include_deps: ?[]const []const u8 = null,
     debug: bool = false,
 };
 
-fn convert(allocator: Allocator, info: CompileInfo, include_deps: ?std.BufSet, options: Options) !CompileCommandsJson {
+fn convert(allocator: Allocator, info: CompileInfo, deps: ?std.BufSet, options: Options) !CompileCommandsJson {
     var json = try CompileCommandsJson.init(allocator);
     var arguments = try std.ArrayList(CompileCommandsJson.Argument).initCapacity(allocator, 16);
     defer arguments.deinit(allocator);
@@ -176,15 +192,23 @@ fn convert(allocator: Allocator, info: CompileInfo, include_deps: ?std.BufSet, o
     try arguments.append(allocator, .{ .system_include_dirs = info.include.system });
     {
         // NOTE: 若为根目录外的源码，需要至少打开一次建立索引后才能跳到源码，否则只能跳到声明
+        var include_current_dependency = false;
         for (info.source.dependencies) |dep_info| {
             try arguments.append(allocator, .{ .include_dirs = dep_info.include.installed });
-            if (include_deps) |set| {
-                // TODO 去重，若需添加依赖源码，则构建树同名依赖应该只添加一次
-                if (set.contains(dep_info.name)) {
-                    var j = try convert(allocator, dep_info, set, options);
-                    defer j.deinit(allocator);
-                    try json.mergeMove(allocator, &j);
+            // TODO 去重，若需添加依赖源码，则构建树同名依赖应该只添加一次
+            include_current_dependency = blk: {
+                if (options.exclude_deps) |_| {
+                    break :blk !deps.?.contains(dep_info.name);
                 }
+                if (options.include_deps) |_| {
+                    break :blk deps.?.contains(dep_info.name);
+                }
+                break :blk false;
+            };
+            if (include_current_dependency) {
+                var j = try convert(allocator, dep_info, deps, options);
+                defer j.deinit(allocator);
+                try json.mergeMove(allocator, &j);
             }
         }
         const end_of_common = arguments.items.len;
