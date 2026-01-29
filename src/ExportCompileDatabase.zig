@@ -172,6 +172,8 @@ fn convert(allocator: Allocator, info: CompileInfo, include_deps: ?std.BufSet, o
 
     try arguments.append(allocator, .{ .c_macro = if (info.debug) "DEBUG" else null });
     try arguments.append(allocator, .{ .args = info.c_macros });
+    try arguments.append(allocator, .{ .include_dirs = info.include.normal });
+    try arguments.append(allocator, .{ .system_include_dirs = info.include.system });
     {
         // NOTE: 若为根目录外的源码，需要至少打开一次建立索引后才能跳到源码，否则只能跳到声明
         for (info.source.dependencies) |dep_info| {
